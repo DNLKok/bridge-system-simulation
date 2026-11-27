@@ -38,13 +38,14 @@ class PBNTests(unittest.TestCase):
         )
 
     def test_parse_dealer_progress_marker_before_first_pbn_tag(self) -> None:
-        lines = PBN_SAMPLE.read_text(encoding="utf-8").splitlines()
-        lines[0] = f"O{lines[0]}"
+        pbn_lines = PBN_SAMPLE.read_text(encoding="utf-8").splitlines()
+        for marker in ("F", "O"):
+            lines = [f"{marker}{pbn_lines[0]}", *pbn_lines[1:]]
+            with self.subTest(marker=marker):
+                boards = list(parse_pbn(lines))
 
-        boards = list(parse_pbn(lines))
-
-        self.assertEqual(len(boards), 3)
-        self.assertTrue(all(board.seed == 42069 for board in boards))
+                self.assertEqual(len(boards), 3)
+                self.assertTrue(all(board.seed == 42069 for board in boards))
 
     def test_pbn_board_can_be_used_directly_for_auction(self) -> None:
         with PBN_SAMPLE.open(encoding="utf-8") as sample:

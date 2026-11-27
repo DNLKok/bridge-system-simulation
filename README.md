@@ -49,3 +49,6 @@ The end-to-end integration test uses
 [dealer/unrestricted-single-deal.txt](dealer/unrestricted-single-deal.txt);
 it skips when `dealer` is unavailable and can be pointed to an executable with
 the `DEALER_EXECUTABLE` environment variable.
+The [dealer/south-16hcp-4432.txt](dealer/south-16hcp-4432.txt) script and
+integration test also verify that the 1NT system reaches 1NT by South on a
+fixed-seed 16-HCP 4-4-3-2 hand.

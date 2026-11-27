@@ -108,7 +108,7 @@ def parse_pbn(lines: Iterable[str]) -> Iterator[PBNBoard]:
         stripped = line.strip()
         if stripped and first_content:
             first_content = False
-            if stripped.startswith("O["):
+            if len(stripped) > 1 and stripped[0].isalpha() and stripped[1] == "[":
                 stripped = stripped[1:]
         if not stripped:
             if tags:

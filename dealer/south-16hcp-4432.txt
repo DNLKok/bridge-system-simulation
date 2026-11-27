@@ -1,0 +1,12 @@
+/*
+Find one deal where South has exactly 16 HCP and a 4-4-3-2 shape.
+The shape may use any permutation of the four suits.
+The fixed random seed is supplied by the integration test.
+*/
+
+generate 1000000
+produce 1
+vulnerable none
+dealer south
+condition (hcp(south) == 16) && shape(south, any 4432)
+action printpbn
