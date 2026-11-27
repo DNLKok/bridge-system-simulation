@@ -7,6 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from threading import Thread
 from types import MappingProxyType
 from typing import Iterable, Iterator, Mapping
 
@@ -102,8 +103,13 @@ def parse_pbn(lines: Iterable[str]) -> Iterator[PBNBoard]:
     """Parse PBN board records from dealer output, ignoring its text summary."""
     tags: dict[str, str] = {}
     line_number = 0
+    first_content = True
     for line_number, line in enumerate(lines, start=1):
         stripped = line.strip()
+        if stripped and first_content:
+            first_content = False
+            if stripped.startswith("O["):
+                stripped = stripped[1:]
         if not stripped:
             if tags:
                 yield _board_from_tags(tags, line_number)
@@ -236,15 +242,18 @@ class DealerProvider:
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
         )
-        if process.stdout is None:
-            raise RuntimeError("Could not read dealer output.")
+        if process.stdout is None or process.stderr is None:
+            process.kill()
+            process.wait()
+            raise RuntimeError("Could not capture dealer output.")
 
         output_tail: deque[str] = deque(maxlen=20)
+        error_tail: deque[str] = deque(maxlen=20)
         board_count = 0
 
         def capture_output() -> Iterator[str]:
@@ -252,14 +261,26 @@ class DealerProvider:
                 output_tail.append(output_line.rstrip())
                 yield output_line
 
+        def capture_errors() -> None:
+            for error_line in process.stderr:
+                error_tail.append(error_line.rstrip())
+
+        error_reader = Thread(target=capture_errors, daemon=True)
+        error_reader.start()
         try:
             for board in parse_pbn(capture_output()):
                 board_count += 1
                 yield board
 
             return_code = process.wait()
+            error_reader.join()
             if return_code != 0:
-                diagnostic = "\n".join(output_tail)
+                diagnostic = (
+                    "stderr:\n"
+                    + "\n".join(error_tail)
+                    + "\nstdout:\n"
+                    + "\n".join(output_tail)
+                )
                 raise RuntimeError(
                     f"dealer exited with status {return_code}.\n{diagnostic}"
                 )
@@ -272,4 +293,6 @@ class DealerProvider:
             if process.poll() is None:
                 process.terminate()
                 process.wait()
+            error_reader.join()
             process.stdout.close()
+            process.stderr.close()

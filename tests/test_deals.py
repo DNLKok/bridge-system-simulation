@@ -37,6 +37,15 @@ class PBNTests(unittest.TestCase):
             ("Q54", "9762", "QJT972", ""),
         )
 
+    def test_parse_dealer_progress_marker_before_first_pbn_tag(self) -> None:
+        lines = PBN_SAMPLE.read_text(encoding="utf-8").splitlines()
+        lines[0] = f"O{lines[0]}"
+
+        boards = list(parse_pbn(lines))
+
+        self.assertEqual(len(boards), 3)
+        self.assertTrue(all(board.seed == 42069 for board in boards))
+
     def test_pbn_board_can_be_used_directly_for_auction(self) -> None:
         with PBN_SAMPLE.open(encoding="utf-8") as sample:
             board = next(parse_pbn(sample))

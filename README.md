@@ -45,3 +45,7 @@ for board in provider.generate("dealer/input.txt", seed=42069):
 
 The seed is passed using dealer's `-s` option. The provider also accepts an
 explicit executable path, for example `DealerProvider("/usr/games/dealer")`.
+The end-to-end integration test uses
+[dealer/unrestricted-single-deal.txt](dealer/unrestricted-single-deal.txt);
+it skips when `dealer` is unavailable and can be pointed to an executable with
+the `DEALER_EXECUTABLE` environment variable.

@@ -1,0 +1,10 @@
+/*
+One unrestricted board for the dealer-to-auction integration test.
+The fixed random seed is supplied by the test on the command line.
+*/
+
+generate 1
+produce 1
+vulnerable none
+dealer north
+action printpbn
