@@ -38,30 +38,30 @@ model-assistant command to get a rated recommendation.
 
 ## Generating deals with `dealer`
 
-`DealerProvider` runs the existing Hans van Staveren `dealer` executable and
-parses its PBN output. The dealer script must use an action that emits complete
-PBN records, such as `action printpbn`. Its output is streamed directly from
-the process; no temporary output file is needed. The full cards, board number,
-dealer, vulnerability, and seed are retained, and the card hands provide the
-HCP and shape profiles used by the auction.
+`DealerProvider` runs the workspace-local executable at `bin/dealer` by
+default and parses its PBN output. This bundled binary is for Linux x86-64.
+The dealer script must use an action that emits complete PBN records, such as
+`action printpbn`. Its output is streamed directly from the process; no
+temporary output file is needed. The full cards, board number, dealer,
+vulnerability, and seed are retained, and the card hands provide the HCP and
+shape profiles used by the auction.
 
 ```python
 from bridge_sim import DealerProvider, load_system, run_auction
 
 system = load_system("systems/one-no-trump-15-17.toml")
-provider = DealerProvider()  # Resolves "dealer" from PATH.
+provider = DealerProvider("bin/dealer")
 
 for board in provider.generate("dealer/input.txt", seed=42069):
     result = run_auction(board, system, system, dealer=board.dealer)
     print(board.board_number, result.transcript, result.contract)
 ```
 
-The seed is passed using dealer's `-s` option. The provider also accepts an
-explicit executable path, for example `DealerProvider("/usr/games/dealer")`.
-The end-to-end integration test uses
-[dealer/unrestricted-single-deal.txt](dealer/unrestricted-single-deal.txt);
-it skips when `dealer` is unavailable and can be pointed to an executable with
-the `DEALER_EXECUTABLE` environment variable.
+The seed is passed using the local executable's `-s` option. `DealerProvider`
+also accepts an explicit executable path when using a compatible build. The
+end-to-end integration test uses
+[dealer/unrestricted-single-deal.txt](dealer/unrestricted-single-deal.txt) and
+the workspace-local binary.
 With seed `42069`, the passout-system integration test checks for 7NTXX after
 exactly 319 auction calls.
 The [dealer/south-16hcp-4432.txt](dealer/south-16hcp-4432.txt) script and
@@ -152,7 +152,9 @@ denomination, so the correct opening-lead perspective is handled by DDS.
 from bridge_sim import DealerProvider, load_system, run_auction_batch
 
 system = load_system("systems/one-no-trump-15-17.toml")
-boards = list(DealerProvider().generate("dealer/input.txt", seed=42069))
+boards = list(
+    DealerProvider("bin/dealer").generate("dealer/input.txt", seed=42069)
+)
 results = run_auction_batch(boards, system, system)
 
 for board, result in zip(boards, results, strict=True):

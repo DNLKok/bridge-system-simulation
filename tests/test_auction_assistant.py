@@ -1,5 +1,3 @@
-import os
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,10 +85,6 @@ class AuctionAssistantTests(unittest.TestCase):
             )
 
     def test_generated_script_runs_with_dealer_and_predeals_known_hand(self) -> None:
-        executable = os.environ.get("DEALER_EXECUTABLE") or shutil.which("dealer")
-        if executable is None:
-            self.skipTest("Hans van Staveren dealer executable is unavailable.")
-
         auctions = (
             (
                 Seat.EAST,
@@ -129,7 +123,7 @@ class AuctionAssistantTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                     boards = tuple(
-                        DealerProvider(executable).generate(script_path)
+                        DealerProvider().generate(script_path)
                     )
 
                 self.assertEqual(len(boards), 1)

@@ -1,5 +1,4 @@
 import os
-import shutil
 import subprocess
 from statistics import mean
 import unittest
@@ -163,12 +162,6 @@ class TablesPBN4SolverTests(unittest.TestCase):
             )
 
     def test_100_unrestricted_passout_auctions_have_expected_dds_overview(self) -> None:
-        dealer_executable = os.environ.get("DEALER_EXECUTABLE") or shutil.which(
-            "dealer"
-        )
-        if dealer_executable is None:
-            self.skipTest("Hans van Staveren dealer executable is unavailable.")
-
         solver = TablesPBN4Solver()
         if not solver.executable.is_file() or not os.access(
             solver.executable, os.X_OK
@@ -176,7 +169,7 @@ class TablesPBN4SolverTests(unittest.TestCase):
             self.skipTest("Workspace TablesPBN4 executable is unavailable.")
 
         boards = tuple(
-            DealerProvider(dealer_executable).generate(
+            DealerProvider().generate(
                 UNRESTRICTED_100_DEALS_SCRIPT,
                 seed=UNRESTRICTED_100_DEALS_SEED,
             )
