@@ -32,7 +32,7 @@ from .model import (
 )
 from .par import TrickTable, calculate_par_result
 from .scoring import calculate_score_ns
-from .systems import OutOfBookDecision, load_system
+from .systems import DecisionContext, OutOfBookDecision, load_system
 
 DEFAULT_N = 64
 
@@ -149,9 +149,14 @@ def run_model_assistant(
         perspective,
     )
     system_decision = system.choose_call(
-        hand.profile,
-        auction,
-        legal_calls,
+        DecisionContext(
+            hand=hand.profile,
+            auction=tuple(auction),
+            legal_calls=legal_calls,
+            seat=perspective,
+            dealer=dealer,
+            vulnerability=vulnerability,
+        )
     )
     out_of_book = system_decision is OutOfBookDecision.OUT_OF_BOOK
     if out_of_book:

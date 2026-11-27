@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from . import model as _model
+from .deals import Vulnerability
 from .model import (
     AuctionEntry,
     AuctionDeal,
@@ -13,7 +14,7 @@ from .model import (
     RedoubleCall,
     Seat,
 )
-from .systems import BiddingSystem, OutOfBookDecision
+from .systems import BiddingSystem, DecisionContext, OutOfBookDecision
 
 
 def run_auction(
@@ -21,12 +22,14 @@ def run_auction(
     north_south_system: BiddingSystem,
     east_west_system: BiddingSystem,
     dealer: Seat = Seat.NORTH,
+    *,
+    vulnerability: Vulnerability = Vulnerability.NONE,
 ) -> _model.AuctionResult:
     """Run an auction from an existing deal's HCP/shape profiles.
 
-    Systems receive only the current bidder's profile, public auction, and
-    legal calls. The auction supports PASS, contract bids, doubles, and
-    redoubles.
+    Systems receive the current bidder's profile, public auction, legal calls,
+    seat, dealer, and vulnerability. The auction supports PASS, contract bids,
+    doubles, and redoubles.
     """
     entries: list[AuctionEntry] = []
     current_seat = dealer
@@ -48,9 +51,14 @@ def run_auction(
             else east_west_system
         )
         call = system.choose_call(
-            hand=deal.hand_for(current_seat),
-            auction=tuple(entries),
-            legal_calls=legal_calls,
+            DecisionContext(
+                hand=deal.hand_for(current_seat),
+                auction=tuple(entries),
+                legal_calls=legal_calls,
+                seat=current_seat,
+                dealer=dealer,
+                vulnerability=vulnerability,
+            )
         )
         if call is OutOfBookDecision.OUT_OF_BOOK:
             raise RuntimeError(

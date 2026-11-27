@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Protocol, Sequence
 
+from .deals import Vulnerability
 from .model import (
     AuctionEntry,
     Bid,
@@ -15,18 +16,8 @@ from .model import (
     HandProfile,
     PassCall,
     RedoubleCall,
+    Seat,
 )
-
-
-class BiddingSystem(Protocol):
-    def choose_call(
-        self,
-        hand: HandProfile,
-        auction: Sequence[AuctionEntry],
-        legal_calls: frozenset[Call],
-    ) -> Call | OutOfBookDecision:
-        """Choose a call using this hand and the public auction only."""
-        ...
 
 
 class OutOfBookDecision(str, Enum):
@@ -34,94 +25,331 @@ class OutOfBookDecision(str, Enum):
 
 
 @dataclass(frozen=True)
-class OneNoTrumpSystem:
-    system_id: str
-    version: str
-    name: str
-    min_hcp: int
-    max_hcp: int
-    balanced_shapes: frozenset[tuple[int, int, int, int]]
-    default_call: PassCall | None = PassCall.PASS
-    out_of_book_when_unmatched: bool = False
-
-    def choose_call(
-        self,
-        hand: HandProfile,
-        auction: Sequence[AuctionEntry],
-        legal_calls: frozenset[Call],
-    ) -> Call | OutOfBookDecision:
-        del auction  # This system's only rule depends on the hand and legality.
-        preferred_call = Bid(1, Denomination.NOTRUMP)
-        if (
-            self.min_hcp <= hand.hcp <= self.max_hcp
-            and hand.canonical_shape in self.balanced_shapes
-            and preferred_call in legal_calls
-        ):
-            return preferred_call
-        if self.out_of_book_when_unmatched:
-            return OutOfBookDecision.OUT_OF_BOOK
-        if self.default_call is None:
-            raise RuntimeError("An in-book system must define a default call.")
-        return self.default_call
+class DecisionContext:
+    hand: HandProfile
+    auction: tuple[AuctionEntry, ...]
+    legal_calls: frozenset[Call]
+    seat: Seat
+    dealer: Seat
+    vulnerability: Vulnerability
 
 
 @dataclass(frozen=True)
-class PassoutSystem:
+class ModuleDecision:
+    call: Call
+    module_id: str
+    rule_id: str
+    explanation: str | None = None
+
+
+@dataclass(frozen=True)
+class DealerCallCondition:
+    expressions: tuple[str, ...] = ()
+    selects_call: bool = False
+    impossible: bool = False
+
+
+@dataclass(frozen=True)
+class RuleCondition:
+    min_hcp: int | None = None
+    max_hcp: int | None = None
+    shapes: frozenset[tuple[int, int, int, int]] | None = None
+    passout_seat: bool | None = None
+
+    def matches(self, context: DecisionContext) -> bool:
+        if self.min_hcp is not None and context.hand.hcp < self.min_hcp:
+            return False
+        if self.max_hcp is not None and context.hand.hcp > self.max_hcp:
+            return False
+        if self.shapes is not None and context.hand.canonical_shape not in self.shapes:
+            return False
+        return self.matches_public_context(context)
+
+    def matches_public_context(self, context: DecisionContext) -> bool:
+        return (
+            self.passout_seat is None
+            or _is_passout_seat(context.auction) is self.passout_seat
+        )
+
+    def dealer_expression(self, seat: Seat) -> str | None:
+        seat_name = _SEAT_NAMES[seat]
+        expressions: list[str] = []
+        if self.min_hcp is not None:
+            expressions.append(f"(hcp({seat_name}) >= {self.min_hcp})")
+        if self.max_hcp is not None:
+            expressions.append(f"(hcp({seat_name}) <= {self.max_hcp})")
+        if self.shapes is not None:
+            shape_options = " + ".join(
+                f"any {''.join(str(length) for length in shape)}"
+                for shape in sorted(self.shapes)
+            )
+            expressions.append(f"shape({seat_name}, {shape_options})")
+        if not expressions:
+            return None
+        return " && ".join(expressions)
+
+
+@dataclass(frozen=True)
+class BiddingRule:
+    rule_id: str
+    condition: RuleCondition
+    preferred_calls: tuple[Call, ...]
+    explanation: str | None = None
+
+    def decide(self, context: DecisionContext, module_id: str) -> ModuleDecision | None:
+        if not self.condition.matches(context):
+            return None
+        call = self._selected_call(context)
+        if call is None:
+            return None
+        return ModuleDecision(call, module_id, self.rule_id, self.explanation)
+
+    def dealer_call_condition(
+        self,
+        context: DecisionContext,
+        observed_call: Call,
+    ) -> DealerCallCondition:
+        if not self.condition.matches_public_context(context):
+            return DealerCallCondition()
+        expected_call = self._selected_call(context)
+        if expected_call is None:
+            return DealerCallCondition()
+
+        expression = self.condition.dealer_expression(context.seat)
+        if expected_call == observed_call:
+            expressions = (expression,) if expression is not None else ()
+            return DealerCallCondition(expressions, selects_call=True)
+        if expression is None:
+            return DealerCallCondition(impossible=True)
+        return DealerCallCondition((f"!({expression})",))
+
+    def _selected_call(self, context: DecisionContext) -> Call | None:
+        return next(
+            (
+                call
+                for call in self.preferred_calls
+                if call in context.legal_calls
+            ),
+            None,
+        )
+
+
+@dataclass(frozen=True)
+class BiddingModule:
+    module_id: str
+    version: str
+    name: str
+    rules: tuple[BiddingRule, ...]
+
+    def choose(self, context: DecisionContext) -> ModuleDecision | None:
+        for rule in self.rules:
+            decision = rule.decide(context, self.module_id)
+            if decision is not None:
+                return decision
+        return None
+
+    def dealer_call_condition(
+        self,
+        context: DecisionContext,
+        observed_call: Call,
+    ) -> DealerCallCondition:
+        expressions: list[str] = []
+        for rule in self.rules:
+            condition = rule.dealer_call_condition(context, observed_call)
+            expressions.extend(condition.expressions)
+            if condition.impossible:
+                return condition
+            if condition.selects_call:
+                return DealerCallCondition(tuple(expressions), selects_call=True)
+        return DealerCallCondition(tuple(expressions))
+
+
+class BiddingSystem(Protocol):
+    def choose_call(
+        self,
+        context: DecisionContext,
+    ) -> Call | OutOfBookDecision:
+        """Choose a legal call using the current decision context."""
+        ...
+
+
+@dataclass(frozen=True)
+class CompositeBiddingSystem:
     system_id: str
     version: str
     name: str
+    modules: tuple[BiddingModule, ...]
+    fallback: Call | OutOfBookDecision
+
+    def __post_init__(self) -> None:
+        module_ids = [module.module_id for module in self.modules]
+        if len(set(module_ids)) != len(module_ids):
+            raise ValueError("A system cannot include a module more than once.")
 
     def choose_call(
         self,
-        hand: HandProfile,
-        auction: Sequence[AuctionEntry],
-        legal_calls: frozenset[Call],
-    ) -> Call:
-        del hand  # This policy depends only on the public auction and legality.
-        if not _is_passout_seat(auction):
-            return PassCall.PASS
+        context: DecisionContext,
+    ) -> Call | OutOfBookDecision:
+        for module in self.modules:
+            decision = module.choose(context)
+            if decision is None:
+                continue
+            if decision.call not in context.legal_calls:
+                raise RuntimeError(
+                    f"Module {module.module_id!r} selected illegal call "
+                    f"{decision.call!s}."
+                )
+            return decision.call
+        if self.fallback is OutOfBookDecision.OUT_OF_BOOK:
+            return self.fallback
+        if self.fallback not in context.legal_calls:
+            raise RuntimeError(
+                f"System fallback {self.fallback!s} is not legal in this auction."
+            )
+        return self.fallback
 
-        non_pass_calls = legal_calls - {PassCall.PASS}
-        if not non_pass_calls:
-            return PassCall.PASS
-        return min(non_pass_calls, key=_call_order)
+    def dealer_call_condition(
+        self,
+        context: DecisionContext,
+        observed_call: Call,
+    ) -> DealerCallCondition:
+        return _dealer_call_condition(
+            self.modules,
+            self.fallback,
+            context,
+            observed_call,
+            self.name,
+        )
 
 
-def load_system(path: str | Path) -> OneNoTrumpSystem | PassoutSystem:
-    """Load and validate a supported TOML bidding system."""
+def load_system(path: str | Path) -> CompositeBiddingSystem:
+    """Load a modular manifest or translate a legacy system into generic rules."""
     system_path = Path(path)
     with system_path.open("rb") as system_file:
         config = tomllib.load(system_file)
 
+    kind = config.get("kind")
+    if kind == "system":
+        return _load_composite_system(system_path, config)
+    if kind is not None:
+        raise ValueError(f"Unsupported system kind: {kind!r}.")
+    return _load_legacy_system(system_path, config)
+
+
+def load_module(path: str | Path) -> BiddingModule:
+    """Load and validate a data-only TOML module containing ordered rules."""
+    module_path = Path(path)
+    with module_path.open("rb") as module_file:
+        config = tomllib.load(module_file)
+
+    if config.get("schema_version") != 1 or config.get("kind") != "module":
+        raise ValueError(f"Unsupported module schema in {module_path}.")
+    _require_keys(
+        config,
+        {"schema_version", "kind", "id", "version", "name", "rules"},
+        f"module file {module_path}",
+    )
+    module_id, version, name = _validate_metadata(config)
+    raw_rules = config["rules"]
+    if not isinstance(raw_rules, list) or not raw_rules:
+        raise ValueError("A module must define at least one rule.")
+    rules = tuple(_parse_rule(rule, index) for index, rule in enumerate(raw_rules))
+    rule_ids = [rule.rule_id for rule in rules]
+    if len(set(rule_ids)) != len(rule_ids):
+        raise ValueError(f"Module {module_id!r} defines duplicate rule IDs.")
+    return BiddingModule(module_id, version, name, rules)
+
+
+def _load_composite_system(
+    system_path: Path,
+    config: dict[str, object],
+) -> CompositeBiddingSystem:
+    expected = {
+        "schema_version",
+        "kind",
+        "id",
+        "version",
+        "name",
+        "on_no_match",
+        "modules",
+    }
+    _require_keys(config, expected, f"system file {system_path}")
+    if config["schema_version"] != 1:
+        raise ValueError("Modular systems must use schema_version 1.")
+    system_id, version, name = _validate_metadata(config)
+    raw_modules = config["modules"]
+    if not isinstance(raw_modules, list):
+        raise ValueError("System modules must be an array of tables.")
+
+    modules: list[BiddingModule] = []
+    seen_ids: set[str] = set()
+    for index, reference in enumerate(raw_modules):
+        if not isinstance(reference, dict):
+            raise ValueError(f"System module reference {index} must be a table.")
+        _require_keys(
+            reference,
+            {"id", "version", "path"},
+            f"system module reference {index}",
+        )
+        module_id = reference["id"]
+        module_version = reference["version"]
+        path_text = reference["path"]
+        if (
+            not isinstance(module_id, str)
+            or not module_id.strip()
+            or not isinstance(module_version, str)
+            or not module_version.strip()
+            or not isinstance(path_text, str)
+            or not path_text.strip()
+        ):
+            raise ValueError(f"System module reference {index} is invalid.")
+        if module_id in seen_ids:
+            raise ValueError(f"System includes module {module_id!r} more than once.")
+        module_path = Path(path_text)
+        if not module_path.is_absolute():
+            module_path = system_path.parent / module_path
+        module = load_module(module_path)
+        if module.module_id != module_id:
+            raise ValueError(
+                f"System expected module {module_id!r}, but {module_path} "
+                f"declares {module.module_id!r}."
+            )
+        if module.version != module_version:
+            raise ValueError(
+                f"System pins {module_id!r} at {module_version}, but {module_path} "
+                f"contains version {module.version}."
+            )
+        modules.append(module)
+        seen_ids.add(module_id)
+
+    return CompositeBiddingSystem(
+        system_id=system_id,
+        version=version,
+        name=name,
+        modules=tuple(modules),
+        fallback=_parse_fallback(config["on_no_match"]),
+    )
+
+
+def _load_legacy_system(
+    system_path: Path,
+    config: dict[str, object],
+) -> CompositeBiddingSystem:
     schema_version = config.get("schema_version")
     out_of_book_mode = _out_of_book_mode(config)
     common_keys = {"schema_version", "id", "version", "name"}
     if schema_version == 2:
         common_keys.add("out_of_book")
 
-    if config.get("strategy") == "passout":
-        expected = common_keys | {"strategy", "default_call"}
-        _require_keys(
-            config,
-            expected,
-            f"system file {system_path}",
-        )
-        _validate_metadata(config)
-        if out_of_book_mode != "never":
-            raise ValueError("The passout system must be explicitly in book.")
-        if config["default_call"] != PassCall.PASS.value:
-            raise ValueError("The supported system's default_call must be PASS.")
-        return PassoutSystem(
-            system_id=config["id"],
-            version=config["version"],
-            name=config["name"],
-        )
+    strategy = config.get("strategy")
+    if strategy is not None:
+        raise ValueError(f"Unsupported legacy system strategy: {strategy!r}.")
 
     expected = common_keys | {"rule"}
     if out_of_book_mode == "never":
         expected.add("default_call")
     _require_keys(config, expected, f"system file {system_path}")
-    _validate_metadata(config)
+    system_id, version, name = _validate_metadata(config)
     default_call = (
         config.get("default_call")
         if out_of_book_mode == "never"
@@ -130,46 +358,211 @@ def load_system(path: str | Path) -> OneNoTrumpSystem | PassoutSystem:
     if out_of_book_mode == "never" and default_call != PassCall.PASS.value:
         raise ValueError("The supported system's default_call must be PASS.")
 
-    rule = config["rule"]
-    if not isinstance(rule, dict):
+    raw_rule = config["rule"]
+    if not isinstance(raw_rule, dict):
         raise ValueError("System rule must be a TOML table.")
     _require_keys(
-        rule,
+        raw_rule,
         {"id", "call", "min_hcp", "max_hcp", "balanced_shapes"},
         "system rule",
     )
-    if not isinstance(rule["id"], str) or not rule["id"].strip():
+    rule_id = raw_rule["id"]
+    if not isinstance(rule_id, str) or not rule_id.strip():
         raise ValueError("System rule id must be a non-empty string.")
-    if rule["call"] != "1NT":
-        raise ValueError("The supported system rule call must be 1NT.")
-
-    min_hcp = rule["min_hcp"]
-    max_hcp = rule["max_hcp"]
-    if (
-        not isinstance(min_hcp, int)
-        or isinstance(min_hcp, bool)
-        or not isinstance(max_hcp, int)
-        or isinstance(max_hcp, bool)
-        or not 0 <= min_hcp <= max_hcp <= 37
-    ):
-        raise ValueError("System HCP bounds must satisfy 0 <= min_hcp <= max_hcp <= 37.")
-
-    raw_shapes = rule["balanced_shapes"]
+    min_hcp, max_hcp = _parse_hcp_range(raw_rule["min_hcp"], raw_rule["max_hcp"])
+    raw_shapes = raw_rule["balanced_shapes"]
     if not isinstance(raw_shapes, list) or not raw_shapes:
         raise ValueError("balanced_shapes must be a non-empty TOML array.")
-    balanced_shapes = frozenset(_parse_shape(shape) for shape in raw_shapes)
-
-    return OneNoTrumpSystem(
-        system_id=config["id"],
-        version=config["version"],
-        name=config["name"],
-        min_hcp=min_hcp,
-        max_hcp=max_hcp,
-        balanced_shapes=balanced_shapes,
-        default_call=PassCall.PASS if default_call == PassCall.PASS.value else None,
-        out_of_book_when_unmatched=out_of_book_mode
-        == "when_no_rule_matches",
+    rule = BiddingRule(
+        rule_id=rule_id,
+        condition=RuleCondition(
+            min_hcp=min_hcp,
+            max_hcp=max_hcp,
+            shapes=frozenset(_parse_shape(shape) for shape in raw_shapes),
+        ),
+        preferred_calls=(_parse_call(raw_rule["call"]),),
     )
+    fallback = (
+        OutOfBookDecision.OUT_OF_BOOK
+        if out_of_book_mode == "when_no_rule_matches"
+        else PassCall.PASS
+    )
+    return _legacy_system(system_id, version, name, (rule,), fallback)
+
+
+def _legacy_system(
+    system_id: str,
+    version: str,
+    name: str,
+    rules: tuple[BiddingRule, ...],
+    fallback: Call | OutOfBookDecision,
+) -> CompositeBiddingSystem:
+    module = BiddingModule(
+        module_id=system_id,
+        version=version,
+        name=name,
+        rules=rules,
+    )
+    return CompositeBiddingSystem(
+        system_id=system_id,
+        version=version,
+        name=name,
+        modules=(module,),
+        fallback=fallback,
+    )
+
+
+def _parse_rule(value: object, index: int) -> BiddingRule:
+    if not isinstance(value, dict):
+        raise ValueError(f"Module rule {index} must be a TOML table.")
+    required = {"id", "when"}
+    allowed = required | {"call", "try_calls", "explanation"}
+    missing = required - set(value)
+    unknown = set(value) - allowed
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing keys: {', '.join(sorted(missing))}")
+        if unknown:
+            details.append(f"unknown keys: {', '.join(sorted(unknown))}")
+        raise ValueError(f"Invalid module rule {index} ({'; '.join(details)}).")
+    if ("call" in value) == ("try_calls" in value):
+        raise ValueError(
+            f"Module rule {index} must define exactly one of call or try_calls."
+        )
+
+    rule_id = value["id"]
+    if not isinstance(rule_id, str) or not rule_id.strip():
+        raise ValueError(f"Module rule {index} id must be a non-empty string.")
+    raw_condition = value["when"]
+    condition = _parse_condition(raw_condition, index)
+    if "call" in value:
+        preferred_calls = (_parse_call(value["call"]),)
+    else:
+        raw_calls = value["try_calls"]
+        if not isinstance(raw_calls, list) or not raw_calls:
+            raise ValueError(f"Module rule {index} try_calls must be a non-empty array.")
+        preferred_calls = tuple(_parse_call(call) for call in raw_calls)
+        if len(set(preferred_calls)) != len(preferred_calls):
+            raise ValueError(f"Module rule {index} has duplicate try_calls.")
+    explanation = value.get("explanation")
+    if explanation is not None and not isinstance(explanation, str):
+        raise ValueError(f"Module rule {index} explanation must be a string.")
+    return BiddingRule(rule_id, condition, preferred_calls, explanation)
+
+
+def _parse_condition(value: object, index: int) -> RuleCondition:
+    if not isinstance(value, dict):
+        raise ValueError(f"Module rule {index} when must be a TOML table.")
+    allowed = {"min_hcp", "max_hcp", "shapes", "passout_seat"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(
+            f"Unknown conditions in module rule {index}: {', '.join(sorted(unknown))}."
+        )
+    if not value:
+        raise ValueError(f"Module rule {index} must define at least one condition.")
+
+    min_hcp: int | None = None
+    max_hcp: int | None = None
+    if "min_hcp" in value or "max_hcp" in value:
+        min_hcp, max_hcp = _parse_hcp_range(
+            value.get("min_hcp"),
+            value.get("max_hcp"),
+        )
+
+    shapes: frozenset[tuple[int, int, int, int]] | None = None
+    if "shapes" in value:
+        raw_shapes = value["shapes"]
+        if not isinstance(raw_shapes, list) or not raw_shapes:
+            raise ValueError(f"Module rule {index} shapes must be a non-empty array.")
+        shapes = frozenset(_parse_shape(shape) for shape in raw_shapes)
+
+    passout_seat = value.get("passout_seat")
+    if passout_seat is not None and not isinstance(passout_seat, bool):
+        raise ValueError(f"Module rule {index} passout_seat must be a boolean.")
+    return RuleCondition(min_hcp, max_hcp, shapes, passout_seat)
+
+
+def _parse_hcp_range(
+    raw_min: object,
+    raw_max: object,
+) -> tuple[int | None, int | None]:
+    if raw_min is None:
+        min_hcp = None
+    elif (
+        isinstance(raw_min, int)
+        and not isinstance(raw_min, bool)
+        and 0 <= raw_min <= 37
+    ):
+        min_hcp = raw_min
+    else:
+        raise ValueError("min_hcp must be an integer from 0 to 37.")
+
+    if raw_max is None:
+        max_hcp = None
+    elif (
+        isinstance(raw_max, int)
+        and not isinstance(raw_max, bool)
+        and 0 <= raw_max <= 37
+    ):
+        max_hcp = raw_max
+    else:
+        raise ValueError("max_hcp must be an integer from 0 to 37.")
+
+    if min_hcp is not None and max_hcp is not None and min_hcp > max_hcp:
+        raise ValueError("min_hcp cannot be greater than max_hcp.")
+    return min_hcp, max_hcp
+
+
+def _dealer_call_condition(
+    modules: Sequence[BiddingModule],
+    fallback: Call | OutOfBookDecision,
+    context: DecisionContext,
+    observed_call: Call,
+    system_name: str,
+) -> DealerCallCondition:
+    expressions: list[str] = []
+    for module in modules:
+        condition = module.dealer_call_condition(context, observed_call)
+        expressions.extend(condition.expressions)
+        if condition.impossible:
+            raise ValueError(
+                f"Call {observed_call!s} is inconsistent with the "
+                f"{system_name!r} system."
+            )
+        if condition.selects_call:
+            return DealerCallCondition(tuple(expressions), selects_call=True)
+
+    if fallback is OutOfBookDecision.OUT_OF_BOOK or fallback == observed_call:
+        return DealerCallCondition(tuple(expressions))
+    raise ValueError(
+        f"Call {observed_call!s} is inconsistent with the {system_name!r} system."
+    )
+
+
+def _parse_fallback(value: object) -> Call | OutOfBookDecision:
+    if isinstance(value, str) and value.upper() == OutOfBookDecision.OUT_OF_BOOK.value:
+        return OutOfBookDecision.OUT_OF_BOOK
+    return _parse_call(value)
+
+
+def _parse_call(value: object) -> Call:
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid auction call: {value!r}.")
+    normalized = value.strip().upper()
+    if normalized in ("P", "PASS"):
+        return PassCall.PASS
+    if normalized in ("X", "DOUBLE"):
+        return DoubleCall.DOUBLE
+    if normalized in ("XX", "REDOUBLE"):
+        return RedoubleCall.REDOUBLE
+    if len(normalized) < 2 or normalized[0] not in "1234567":
+        raise ValueError(f"Invalid auction call: {value!r}.")
+    try:
+        return Bid(int(normalized[0]), Denomination(normalized[1:]))
+    except ValueError as error:
+        raise ValueError(f"Invalid auction call: {value!r}.") from error
 
 
 def _out_of_book_mode(config: dict[str, object]) -> str:
@@ -183,19 +576,26 @@ def _out_of_book_mode(config: dict[str, object]) -> str:
     return mode
 
 
-def _validate_metadata(config: dict[str, object]) -> None:
+def _validate_metadata(config: dict[str, object]) -> tuple[str, str, str]:
     if (
         not isinstance(config["schema_version"], int)
         or isinstance(config["schema_version"], bool)
         or config["schema_version"] not in (1, 2)
     ):
-        raise ValueError("Only system schema_version 1 or 2 is supported.")
-    if not isinstance(config["id"], str) or not config["id"].strip():
-        raise ValueError("System id must be a non-empty string.")
-    if not isinstance(config["version"], str) or not config["version"].strip():
-        raise ValueError("System version must be a non-empty string.")
-    if not isinstance(config["name"], str) or not config["name"].strip():
-        raise ValueError("System name must be a non-empty string.")
+        raise ValueError("Only schema_version 1 or 2 is supported.")
+    system_id = config.get("id")
+    version = config.get("version")
+    name = config.get("name")
+    if (
+        not isinstance(system_id, str)
+        or not system_id.strip()
+        or not isinstance(version, str)
+        or not version.strip()
+        or not isinstance(name, str)
+        or not name.strip()
+    ):
+        raise ValueError("System/module id, version, and name must be non-empty strings.")
+    return system_id, version, name
 
 
 def _is_passout_seat(auction: Sequence[AuctionEntry]) -> bool:
@@ -204,20 +604,16 @@ def _is_passout_seat(auction: Sequence[AuctionEntry]) -> bool:
         if entry.call is not PassCall.PASS:
             break
         trailing_passes += 1
-
     has_contract_bid = any(isinstance(entry.call, Bid) for entry in auction)
     return trailing_passes == (2 if has_contract_bid else 3)
 
 
-def _call_order(call: Call) -> tuple[int, int, int]:
-    if call is DoubleCall.DOUBLE:
-        return 0, 0, 0
-    if call is RedoubleCall.REDOUBLE:
-        return 1, 0, 0
-    if isinstance(call, Bid):
-        level, denomination = call.order
-        return 2, level, denomination
-    raise ValueError(f"Cannot order pass as a non-pass call: {call!s}")
+_SEAT_NAMES = {
+    Seat.NORTH: "north",
+    Seat.EAST: "east",
+    Seat.SOUTH: "south",
+    Seat.WEST: "west",
+}
 
 
 def _parse_shape(value: object) -> tuple[int, int, int, int]:
@@ -227,10 +623,10 @@ def _parse_shape(value: object) -> tuple[int, int, int, int]:
         or not value.isascii()
         or not value.isdigit()
     ):
-        raise ValueError("Each balanced shape must be a four-digit string such as '4333'.")
+        raise ValueError("Each shape must be a four-digit string such as '4333'.")
     shape = tuple(int(length) for length in value)
     if tuple(sorted(shape, reverse=True)) != shape or sum(shape) != 13:
-        raise ValueError(f"Balanced shape {value!r} must be descending and total 13.")
+        raise ValueError(f"Shape {value!r} must be descending and total 13.")
     return shape[0], shape[1], shape[2], shape[3]
 
 

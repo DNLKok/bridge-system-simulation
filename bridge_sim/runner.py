@@ -24,6 +24,7 @@ def run_auction_batch(
             north_south_system,
             east_west_system,
             dealer=board.dealer,
+            vulnerability=board.vulnerability,
         )
         for board in board_batch
     )

@@ -31,7 +31,16 @@ or `"when_no_rule_matches"`. An in-book 1NT system uses
 `out_of_book = "never"` with `default_call = "PASS"`; a system that delegates
 unmatched situations to the model assistant uses
 `out_of_book = "when_no_rule_matches"` and omits `default_call`. Version 1
-files remain supported and are treated as always in book.
+legacy single-rule 1NT files remain supported and are treated as always in
+book. The former `strategy = "passout"` shortcut is not supported; the passout
+example now stores its ordered call preferences in a module file.
+Modular system manifests use `kind = "system"` and list ordered, version-pinned
+modules by ID and relative TOML path. The first module rule that matches and
+selects a legal call wins; `on_no_match` explicitly supplies the fallback.
+The 1NT and passout examples remain separate systems, each referencing its own
+module. Their rules are data in [systems/modules/](systems/modules/); the
+loader interprets the shared rule vocabulary. Existing single-system TOML
+1NT files remain loadable.
 If `run_auction` encounters an out-of-book decision, it raises a clear error
 instead of silently inventing a call; provide that auction context to the
 model-assistant command to get a rated recommendation.
@@ -70,14 +79,15 @@ fixed-seed 16-HCP 4-4-3-2 hand.
 
 ## Assisting during an auction
 
-The TOML system files remain the canonical, typed definition of each bidding
-rule. The assistant translates those fields into Dealer expressions when
-generating a script, rather than storing a second manually maintained copy of
-the rule in Dealer syntax. For example, the 1NT system's HCP and balanced-shape
-fields become the corresponding `hcp(...)` and `shape(...)` condition. A pass
-constrains the hand to the complement of that rule only when 1NT was a legal
-call. Systems whose calls are determined solely by auction state add no hand
-constraint.
+The TOML module files are the canonical, typed definition of each bidding
+rule, while system manifests compose ordered module versions and define a
+fallback. Rules specify conditions and either a call or an ordered `try_calls`
+list; the Python code interprets these generic fields rather than encoding the
+sample bidding agreements. The assistant translates the same TOML conditions
+into Dealer expressions when generating a script. For example, the 1NT
+module's HCP range and shape list become `hcp(...)` and `shape(...)`
+conditions. A pass constrains the hand to the complement of that rule only
+when 1NT was legal. Auction-only conditions add no hand constraint.
 
 Generate a script from the perspective of the seat currently due to call:
 

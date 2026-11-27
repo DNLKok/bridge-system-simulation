@@ -16,7 +16,14 @@ from .model import (
     RedoubleCall,
     Seat,
 )
-from .systems import BiddingSystem, OneNoTrumpSystem, PassoutSystem, load_system
+from .systems import (
+    BiddingSystem,
+    CompositeBiddingSystem,
+    DecisionContext,
+    load_system,
+)
+
+_SupportedSystem = CompositeBiddingSystem
 
 _SEAT_NAMES = {
     Seat.NORTH: "north",
@@ -76,6 +83,7 @@ def generate_dealer_script(
         dealer,
         partner_policy,
         opponent_policy,
+        vulnerability,
         frozenset(unconstrained_entries),
     )
 
@@ -116,8 +124,9 @@ def _auction_conditions(
     perspective: Seat,
     auction: Sequence[AuctionEntry],
     dealer: Seat,
-    partner_system: BiddingSystem,
-    opponent_system: BiddingSystem,
+    partner_system: _SupportedSystem,
+    opponent_system: _SupportedSystem,
+    vulnerability: Vulnerability,
     unconstrained_entries: frozenset[int],
 ) -> list[tuple[str, str]]:
     conditions: list[tuple[str, str]] = []
@@ -166,6 +175,8 @@ def _auction_conditions(
                 previous_entries,
                 legal_calls,
                 policy,
+                dealer,
+                vulnerability,
             )
             if condition is not None:
                 conditions.append(
@@ -204,60 +215,35 @@ def _call_condition(
     entry: AuctionEntry,
     previous_entries: Sequence[AuctionEntry],
     legal_calls: frozenset[Call],
-    policy: BiddingSystem,
+    policy: _SupportedSystem,
+    dealer: Seat,
+    vulnerability: Vulnerability,
 ) -> str | None:
-    if isinstance(policy, PassoutSystem):
-        expected_call = policy.choose_call(
-            _PASSOUT_HAND,
-            previous_entries,
-            legal_calls,
+    condition = policy.dealer_call_condition(
+        DecisionContext(
+            hand=_PASSOUT_HAND.profile,
+            auction=tuple(previous_entries),
+            legal_calls=legal_calls,
+            seat=entry.seat,
+            dealer=dealer,
+            vulnerability=vulnerability,
+        ),
+        entry.call,
+    )
+    if condition.impossible:
+        raise ValueError(
+            f"Call {entry.call!s} by {entry.seat.value} is inconsistent "
+            f"with the {policy.name!r} system."
         )
-        if entry.call != expected_call:
-            raise ValueError(
-                f"Call {entry.call!s} by {entry.seat.value} is inconsistent "
-                f"with the {policy.name!r} system."
-            )
-        return None
-
-    if not isinstance(policy, OneNoTrumpSystem):
-        raise TypeError(
-            f"Cannot derive Dealer constraints for system {type(policy).__name__}."
-        )
-
-    rule_call = Bid(1, Denomination.NOTRUMP)
-    if entry.call == rule_call:
-        return _one_nt_condition(policy, entry.seat)
-    if entry.call is PassCall.PASS:
-        if rule_call in legal_calls:
-            return f"!({_one_nt_condition(policy, entry.seat)})"
-        return None
-    if policy.out_of_book_when_unmatched:
-        return None
-    raise ValueError(
-        f"Call {entry.call!s} by {entry.seat.value} cannot be made by "
-        f"the {policy.name!r} system."
-    )
-
-
-def _one_nt_condition(system: OneNoTrumpSystem, seat: Seat) -> str:
-    seat_name = _SEAT_NAMES[seat]
-    shape_options = " + ".join(
-        f"any {''.join(str(length) for length in shape)}"
-        for shape in sorted(system.balanced_shapes)
-    )
-    return (
-        f"(hcp({seat_name}) >= {system.min_hcp}) && "
-        f"(hcp({seat_name}) <= {system.max_hcp}) && "
-        f"shape({seat_name}, {shape_options})"
-    )
+    return " && ".join(condition.expressions) or None
 
 
 def _load_policy(
     policy: str | Path | BiddingSystem,
-) -> BiddingSystem:
+) -> _SupportedSystem:
     if isinstance(policy, (str, Path)):
         return load_system(policy)
-    if isinstance(policy, (OneNoTrumpSystem, PassoutSystem)):
+    if isinstance(policy, CompositeBiddingSystem):
         return policy
     raise TypeError("System must be a supported policy or a TOML file path.")
 

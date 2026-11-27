@@ -1,13 +1,11 @@
-schema_version = 2
+schema_version = 1
+kind = "system"
 id = "balanced-15-17-1nt"
 version = "1.0.0"
 name = "Balanced 15-17 1NT or pass"
-out_of_book = "never"
-default_call = "PASS"
+on_no_match = "PASS"
 
-[rule]
-id = "open-1nt"
-call = "1NT"
-min_hcp = 15
-max_hcp = 17
-balanced_shapes = ["4333", "4432", "5332"]
+[[modules]]
+id = "opening-1nt-balanced-15-17"
+version = "1.0.0"
+path = "modules/open-1nt-balanced-15-17.toml"
