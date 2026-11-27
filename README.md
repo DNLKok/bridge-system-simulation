@@ -58,3 +58,55 @@ exactly 319 auction calls.
 The [dealer/south-16hcp-4432.txt](dealer/south-16hcp-4432.txt) script and
 integration test also verify that the 1NT system reaches 1NT by South on a
 fixed-seed 16-HCP 4-4-3-2 hand.
+
+## Evaluating contracts with DDS
+
+`run_auction_batch` completes every auction before invoking the local
+`TablesPBN4` executable once with all contracted deals. The signed
+`AuctionResult.trick_delta` is declarer tricks minus the contract target:
+negative values are undertricks, positive values are overtricks, and zero
+means exactly made. Passed-out boards have `trick_delta=None`.
+The solver selects the trick-table entry for the contract's declarer and
+denomination, so the correct opening-lead perspective is handled by DDS.
+
+```python
+from bridge_sim import DealerProvider, load_system, run_auction_batch
+
+system = load_system("systems/one-no-trump-15-17.toml")
+boards = list(DealerProvider().generate("dealer/input.txt", seed=42069))
+results = run_auction_batch(boards, system, system)
+
+for board, result in zip(boards, results, strict=True):
+    print(board.board_number, result.contract, result.trick_delta)
+```
+
+By default, the solver uses
+`Dealer-Version-2--main/DDS_Demo/SolveTables/TablesPBN4` in this workspace.
+An alternate executable path can be supplied to `TablesPBN4Solver`.
+From the complete trick table, the simulator calculates a `ParResult` using the
+board's dealer and vulnerability. `result.par_result` contains the par contract
+(including declarer and double/redouble status), signed trick delta, and
+North-South score. A passed-out par has no contract or trick delta and scores
+zero. The convenience properties `result.par_contract` and
+`result.par_score_ns` expose the contract and score directly. `score_ns` is the
+attained score, and `score_vs_par` is `score_ns - par_score_ns` (positive means
+North-South outscored par). `imps_vs_par` converts that NS-oriented difference
+to IMPs using the standard IMP scale; positive values favor North-South.
+
+## Calculating duplicate scores
+
+`calculate_score_ns(contract, vulnerability, trick_delta)` returns the standard
+duplicate score from North-South's perspective. It accounts for the declarer's
+vulnerability, denomination, contract level, doubles/redoubles, overtricks,
+undertrick penalties, game, slam, and insult bonuses.
+
+```python
+from bridge_sim import calculate_score_ns
+
+if result.contract is not None and result.trick_delta is not None:
+    score_ns = calculate_score_ns(
+        result.contract,
+        board.vulnerability,
+        result.trick_delta,
+    )
+```
