@@ -14,7 +14,7 @@ the Python parts are developed.
 ## Main components
 
 ```text
-src/bridge_sim/
+bridge_sim/
   model.py       Cards, hands, boards, calls, contracts
   auction.py     Legal calls, turn order, auction completion
   systems.py     System-file loading, validation, rule selection
@@ -40,42 +40,45 @@ vulnerability, and legal calls. It must not receive the other three hands.
 Keep this interface explicit: it prevents accidental use of hidden information
 and makes a decision reproducible from its inputs.
 
-The auction engine owns bridge call legality, doubles and redoubles, turn
-order, and termination. Bidding systems choose among legal calls; they do not
-implement auction mechanics themselves. Invalid calls and ambiguous rules
+The auction engine owns bridge call legality, turn order, and termination.
+Bidding systems choose among legal calls; they do not implement auction
+mechanics themselves. The first implementation supports pass and contract
+bids; doubles and redoubles are future work. Invalid calls and ambiguous rules
 should produce clear validation errors, not be silently ignored.
 
 ### Human-readable systems
 
-Use versioned YAML as the initial canonical format. YAML is editable and
-reviewable in source control; a schema validator can catch typos and malformed
-rules before a simulation starts. Avoid embedding arbitrary Python expressions
-in a system file. Instead, implement a growing set of typed conditions (for
-example HCP range, hand shape, suit length, auction pattern, vulnerability, and
-whether either partnership has bid).
+Use versioned TOML as the initial canonical format. TOML is editable and
+reviewable in source control, and Python's standard library can parse it
+without an extra dependency. The initial implementation uses `tomllib` and
+therefore requires Python 3.11 or newer. Avoid embedding arbitrary Python
+expressions in a system file. Instead, implement a growing set of typed
+conditions (for example HCP range, hand shape, suit length, auction pattern,
+vulnerability, and whether either partnership has bid).
 
 A simplified rule might look like this:
 
-```yaml
-schema_version: 1
-id: basic
-version: 1.0.0
-name: Basic example
+```toml
+schema_version = 1
+id = "basic"
+version = "1.0.0"
+name = "Basic example"
+default_call = "PASS"
 
-rules:
-  - id: open-1nt
-    priority: 100
-    when:
-      auction:
-        contract_exists: false
-        own_side_has_bid: false
-      hand:
-        hcp: {min: 15, max: 17}
-        balanced: true
-    call: 1NT
-    explanation: "15-17 HCP, balanced"
+[[rules]]
+id = "open-1nt"
+priority = 100
+call = "1NT"
+explanation = "15-17 HCP, balanced"
 
-default_call: PASS
+[rules.when.auction]
+contract_exists = false
+own_side_has_bid = false
+
+[rules.when.hand]
+min_hcp = 15
+max_hcp = 17
+balanced = true
 ```
 
 This is an illustrative schema, not a claim that the first implementation
@@ -97,25 +100,27 @@ an entire base system for every variation, and more understandable than
 implicit inheritance.
 
 Also support a system that delegates a decision to another system in a defined
-situation. For example, a composite policy could use one pinned system for
-uncontested auctions and another for competitive auctions:
+situation. For example, a future composite policy could use one pinned system
+for uncontested auctions and another for competitive auctions:
 
-```yaml
-schema_version: 1
-id: hybrid
-version: 1.0.0
+```toml
+schema_version = 1
+id = "hybrid"
+version = "1.0.0"
 
-strategy:
-  - when:
-      auction:
-        competitive: false
-    use: standard@1.4.0
-  - when:
-      auction:
-        competitive: true
-    use: aggressive@2.1.0
-  - otherwise:
-      use: conservative@1.2.0
+[[strategy]]
+use = "standard@1.4.0"
+[strategy.when]
+competitive = false
+
+[[strategy]]
+use = "aggressive@2.1.0"
+[strategy.when]
+competitive = true
+
+[[strategy]]
+use = "conservative@1.2.0"
+otherwise = true
 ```
 
 The exact syntax can evolve, but the semantics should be deliberate:

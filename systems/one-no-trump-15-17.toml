@@ -1,0 +1,12 @@
+schema_version = 1
+id = "balanced-15-17-1nt"
+version = "1.0.0"
+name = "Balanced 15-17 1NT or pass"
+default_call = "PASS"
+
+[rule]
+id = "open-1nt"
+call = "1NT"
+min_hcp = 15
+max_hcp = 17
+balanced_shapes = ["4333", "4432", "5332"]
