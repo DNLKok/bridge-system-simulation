@@ -20,6 +20,7 @@ from bridge_sim import (
 ROOT = Path(__file__).resolve().parents[1]
 ONE_NT_MODULE = ROOT / "systems" / "modules" / "open-1nt-balanced-15-17.toml"
 PASSOUT_SYSTEM = ROOT / "systems" / "passout-cheapest-call.toml"
+PREEMPT_SYSTEM = ROOT / "systems" / "traditional-preempts.toml"
 
 
 def context(
@@ -96,6 +97,34 @@ path = "medium.toml"
     system_path = directory / "system.toml"
     system_path.write_text(manifest, encoding="utf-8")
     return system_path
+
+
+def _preempt_legal_calls() -> frozenset[Call]:
+    calls: set[Call] = {PassCall.PASS}
+    for level, denominations in (
+        (2, (Denomination.DIAMONDS, Denomination.HEARTS, Denomination.SPADES)),
+        (
+            3,
+            (
+                Denomination.CLUBS,
+                Denomination.DIAMONDS,
+                Denomination.HEARTS,
+                Denomination.SPADES,
+            ),
+        ),
+        (
+            4,
+            (
+                Denomination.CLUBS,
+                Denomination.DIAMONDS,
+                Denomination.HEARTS,
+                Denomination.SPADES,
+            ),
+        ),
+        (5, (Denomination.CLUBS, Denomination.DIAMONDS)),
+    ):
+        calls.update(Bid(level, denomination) for denomination in denominations)
+    return frozenset(calls)
 
 
 class BiddingModuleTests(unittest.TestCase):
@@ -279,6 +308,170 @@ modules = []
             ),
             OutOfBookDecision.OUT_OF_BOOK,
         )
+
+    def test_traditional_preempts_apply_hcp_suit_hcp_and_length_boundaries(self) -> None:
+        system = load_system(PREEMPT_SYSTEM)
+        legal_calls = _preempt_legal_calls()
+
+        for points, suit_hcp, expected in (
+            (4, (4, 0, 0, 0), Bid(2, Denomination.SPADES)),
+            (10, (4, 3, 2, 1), Bid(2, Denomination.SPADES)),
+            (3, (3, 0, 0, 0), PassCall.PASS),
+            (11, (4, 4, 2, 1), PassCall.PASS),
+            (4, (3, 1, 0, 0), PassCall.PASS),
+        ):
+            with self.subTest(points=points, suit_hcp=suit_hcp):
+                shape = (6, 3, 2, 2)
+                profile = HandProfile(points, shape, suit_hcp)
+                self.assertEqual(
+                    system.choose_call(context(profile, (), legal_calls, Seat.NORTH)),
+                    expected,
+                )
+
+    def test_preempt_length_maps_to_supported_levels(self) -> None:
+        system = load_system(PREEMPT_SYSTEM)
+        legal_calls = _preempt_legal_calls()
+        cases = (
+            ((6, 3, 2, 2), (4, 0, 0, 0), Bid(2, Denomination.SPADES)),
+            ((7, 3, 2, 1), (4, 0, 0, 0), Bid(3, Denomination.SPADES)),
+            ((8, 3, 1, 1), (4, 0, 0, 0), Bid(4, Denomination.SPADES)),
+            ((1, 1, 2, 9), (0, 0, 0, 4), Bid(5, Denomination.CLUBS)),
+        )
+        for shape, suit_hcp, expected in cases:
+            with self.subTest(shape=shape):
+                profile = HandProfile(sum(suit_hcp), shape, suit_hcp)
+                self.assertEqual(
+                    system.choose_call(context(profile, (), legal_calls, Seat.NORTH)),
+                    expected,
+                )
+
+    def test_preempts_choose_longest_qualifying_suit_then_suit_tie_order(self) -> None:
+        system = load_system(PREEMPT_SYSTEM)
+        legal_calls = _preempt_legal_calls()
+        cases = (
+            ((0, 0, 6, 7), (0, 0, 4, 0), Bid(2, Denomination.DIAMONDS)),
+            ((0, 0, 7, 6), (0, 0, 4, 4), Bid(3, Denomination.DIAMONDS)),
+            ((0, 1, 6, 6), (0, 0, 4, 4), Bid(2, Denomination.DIAMONDS)),
+        )
+        for shape, suit_hcp, expected in cases:
+            with self.subTest(shape=shape):
+                profile = HandProfile(sum(suit_hcp), shape, suit_hcp)
+                self.assertEqual(
+                    system.choose_call(context(profile, (), legal_calls, Seat.NORTH)),
+                    expected,
+                )
+
+    def test_suit_tie_order_is_selected_by_module_toml(self) -> None:
+        suit_order = '["clubs", "diamonds", "hearts", "spades"]'
+        conditions = (
+            ("diamonds", "2D"),
+            ("clubs", "2C"),
+        )
+        rules = "\n".join(
+            f"""\
+[[rules]]
+id = "open-{suit}"
+call = "{call}"
+
+[rules.when]
+min_hcp = 4
+max_hcp = 10
+suit = "{suit}"
+min_suit_length = 6
+min_suit_hcp = 4
+max_outside_major_length = 3
+longest_qualifying_suit_min_length = 6
+suit_tie_order = {suit_order}
+"""
+            for suit, call in conditions
+        )
+        module = f"""\
+schema_version = 1
+kind = "module"
+id = "tie-order"
+version = "1.0.0"
+name = "Configurable suit tie order"
+
+{rules}"""
+        manifest = """\
+schema_version = 1
+kind = "system"
+id = "tie-order-system"
+version = "1.0.0"
+name = "Configurable suit tie order"
+on_no_match = "PASS"
+
+[[modules]]
+id = "tie-order"
+version = "1.0.0"
+path = "module.toml"
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "module.toml").write_text(module, encoding="utf-8")
+            system_path = path / "system.toml"
+            system_path.write_text(manifest, encoding="utf-8")
+            system = load_system(system_path)
+
+        profile = HandProfile(8, (0, 1, 6, 6), (0, 0, 4, 4))
+        self.assertEqual(
+            system.choose_call(
+                context(
+                    profile,
+                    (),
+                    frozenset(
+                        {
+                            PassCall.PASS,
+                            Bid(2, Denomination.CLUBS),
+                            Bid(2, Denomination.DIAMONDS),
+                        }
+                    ),
+                    Seat.NORTH,
+                )
+            ),
+            Bid(2, Denomination.CLUBS),
+        )
+
+    def test_preempts_reject_outside_major_and_any_prior_contract_bid(self) -> None:
+        system = load_system(PREEMPT_SYSTEM)
+        legal_calls = _preempt_legal_calls()
+        outside_major = HandProfile(4, (4, 0, 6, 3), (0, 0, 4, 0))
+        self.assertIs(
+            system.choose_call(context(outside_major, (), legal_calls, Seat.NORTH)),
+            PassCall.PASS,
+        )
+
+        eligible = HandProfile(4, (6, 3, 2, 2), (4, 0, 0, 0))
+        after_pass = (AuctionEntry(Seat.NORTH, PassCall.PASS),)
+        self.assertEqual(
+            system.choose_call(
+                context(eligible, after_pass, legal_calls, Seat.EAST)
+            ),
+            Bid(2, Denomination.SPADES),
+        )
+        after_contract = (
+            AuctionEntry(Seat.NORTH, Bid(1, Denomination.CLUBS)),
+            AuctionEntry(Seat.EAST, PassCall.PASS),
+        )
+        self.assertIs(
+            system.choose_call(
+                context(eligible, after_contract, legal_calls, Seat.SOUTH)
+            ),
+            PassCall.PASS,
+        )
+
+    def test_preempt_rule_requires_per_suit_hcp_in_hand_profile(self) -> None:
+        system = load_system(PREEMPT_SYSTEM)
+        profile_without_suit_hcp = HandProfile(8, (6, 3, 2, 2))
+        with self.assertRaisesRegex(ValueError, "per-suit HCP"):
+            system.choose_call(
+                context(
+                    profile_without_suit_hcp,
+                    (),
+                    _preempt_legal_calls(),
+                    Seat.NORTH,
+                )
+            )
 
 
 if __name__ == "__main__":

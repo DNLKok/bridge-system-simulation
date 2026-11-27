@@ -10,6 +10,7 @@ from bridge_sim.model import AuctionEntry, Bid, Denomination, PassCall, Seat
 ROOT = Path(__file__).resolve().parents[1]
 ONE_NT_SYSTEM = ROOT / "systems" / "one-no-trump-15-17.toml"
 PASSOUT_SYSTEM = ROOT / "systems" / "passout-cheapest-call.toml"
+PREEMPT_SYSTEM = ROOT / "systems" / "traditional-preempts.toml"
 HAND = CardHand(("AKQ", "JT9", "876", "5432"))
 
 
@@ -54,6 +55,26 @@ class AuctionAssistantTests(unittest.TestCase):
             "condition (!((hcp(north) >= 15)",
             script,
         )
+
+    def test_translates_suit_preempt_constraints_to_dealer_syntax(self) -> None:
+        script = generate_dealer_script(
+            perspective=Seat.EAST,
+            hand=HAND,
+            auction=(AuctionEntry(Seat.NORTH, Bid(2, Denomination.DIAMONDS)),),
+            partner_system=PASSOUT_SYSTEM,
+            opponent_system=PREEMPT_SYSTEM,
+            dealer=Seat.NORTH,
+            vulnerability=Vulnerability.NONE,
+        )
+
+        self.assertIn("(hcp(north) >= 4)", script)
+        self.assertIn("(hcp(north) <= 10)", script)
+        self.assertIn("(diamonds(north) >= 6)", script)
+        self.assertIn("(diamonds(north) <= 6)", script)
+        self.assertIn("(hcp(north, diamonds) >= 4)", script)
+        self.assertIn("(spades(north) <= 3)", script)
+        self.assertIn("(hearts(north) <= 3)", script)
+        self.assertIn("(clubs(north) > diamonds(north))", script)
 
     def test_rejects_a_call_inconsistent_with_a_system(self) -> None:
         with self.assertRaisesRegex(ValueError, "inconsistent"):

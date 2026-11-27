@@ -81,6 +81,7 @@ class HandProfile:
 
     hcp: int
     shape: tuple[int, int, int, int]
+    suit_hcp: tuple[int, int, int, int] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -100,6 +101,18 @@ class HandProfile:
             raise ValueError("Each suit length must be an integer between 0 and 13.")
         if sum(self.shape) != 13:
             raise ValueError("The four suit lengths in a hand must total 13.")
+        if self.suit_hcp is not None:
+            if not isinstance(self.suit_hcp, tuple) or len(self.suit_hcp) != 4:
+                raise ValueError("Suit HCP must contain four suit values.")
+            if any(
+                not isinstance(points, int)
+                or isinstance(points, bool)
+                or not 0 <= points <= 10
+                for points in self.suit_hcp
+            ):
+                raise ValueError("Each suit HCP value must be an integer from 0 to 10.")
+            if sum(self.suit_hcp) != self.hcp:
+                raise ValueError("Suit HCP values must total the hand's HCP.")
 
     @property
     def canonical_shape(self) -> tuple[int, int, int, int]:

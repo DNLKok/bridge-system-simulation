@@ -55,21 +55,90 @@ class RuleCondition:
     max_hcp: int | None = None
     shapes: frozenset[tuple[int, int, int, int]] | None = None
     passout_seat: bool | None = None
+    no_contract_bid: bool | None = None
+    suit: Denomination | None = None
+    min_suit_length: int | None = None
+    max_suit_length: int | None = None
+    min_suit_hcp: int | None = None
+    max_outside_major_length: int | None = None
+    longest_qualifying_suit_min_length: int | None = None
+    suit_tie_order: tuple[Denomination, ...] | None = None
 
     def matches(self, context: DecisionContext) -> bool:
+        if not self.matches_public_context(context):
+            return False
         if self.min_hcp is not None and context.hand.hcp < self.min_hcp:
             return False
         if self.max_hcp is not None and context.hand.hcp > self.max_hcp:
             return False
         if self.shapes is not None and context.hand.canonical_shape not in self.shapes:
             return False
-        return self.matches_public_context(context)
+        if self.suit is not None:
+            suit_index = _SUIT_ORDER.index(self.suit)
+            suit_length = context.hand.shape[suit_index]
+            suit_hcp = context.hand.suit_hcp
+            if self.min_suit_length is not None and suit_length < self.min_suit_length:
+                return False
+            if self.max_suit_length is not None and suit_length > self.max_suit_length:
+                return False
+            if self.min_suit_hcp is not None:
+                if suit_hcp is None:
+                    raise ValueError(
+                        "This bidding rule requires per-suit HCP, which is "
+                        "unavailable in this hand profile."
+                    )
+                if suit_hcp[suit_index] < self.min_suit_hcp:
+                    return False
+            if self.max_outside_major_length is not None:
+                if any(
+                    context.hand.shape[index] > self.max_outside_major_length
+                    for index, major in ((0, Denomination.SPADES), (1, Denomination.HEARTS))
+                    if major is not self.suit
+                ):
+                    return False
+            if self.longest_qualifying_suit_min_length is not None:
+                if suit_hcp is None:
+                    raise ValueError(
+                        "This bidding rule requires per-suit HCP, which is "
+                        "unavailable in this hand profile."
+                    )
+                if self.suit_tie_order is None:
+                    raise RuntimeError(
+                        "A longest-suit condition must define its tie order."
+                    )
+                candidate_length = suit_length
+                candidate_priority = self.suit_tie_order.index(self.suit)
+                for index, other_suit in enumerate(_SUIT_ORDER):
+                    if other_suit is self.suit:
+                        continue
+                    other_length = context.hand.shape[index]
+                    precedes_candidate = (
+                        self.suit_tie_order.index(other_suit) < candidate_priority
+                    )
+                    if (
+                        other_length >= self.longest_qualifying_suit_min_length
+                        and suit_hcp[index] >= (self.min_suit_hcp or 0)
+                        and other_length >= candidate_length
+                        and (other_length > candidate_length or precedes_candidate)
+                        and _outside_majors_qualify(
+                            context.hand.shape,
+                            other_suit,
+                            self.max_outside_major_length,
+                        )
+                    ):
+                        return False
+        return True
 
     def matches_public_context(self, context: DecisionContext) -> bool:
-        return (
-            self.passout_seat is None
-            or _is_passout_seat(context.auction) is self.passout_seat
-        )
+        if self.passout_seat is not None and (
+            _is_passout_seat(context.auction) is not self.passout_seat
+        ):
+            return False
+        if self.no_contract_bid is not None:
+            has_contract_bid = any(isinstance(entry.call, Bid) for entry in context.auction)
+            if has_contract_bid is self.no_contract_bid:
+                return False
+        return True
 
     def dealer_expression(self, seat: Seat) -> str | None:
         seat_name = _SEAT_NAMES[seat]
@@ -84,6 +153,70 @@ class RuleCondition:
                 for shape in sorted(self.shapes)
             )
             expressions.append(f"shape({seat_name}, {shape_options})")
+        if self.suit is not None:
+            suit_name = _SUIT_NAMES[self.suit]
+            if self.min_suit_length is not None:
+                expressions.append(
+                    f"({suit_name}({seat_name}) >= {self.min_suit_length})"
+                )
+            if self.max_suit_length is not None:
+                expressions.append(
+                    f"({suit_name}({seat_name}) <= {self.max_suit_length})"
+                )
+            if self.min_suit_hcp is not None:
+                expressions.append(
+                    f"(hcp({seat_name}, {suit_name}) >= {self.min_suit_hcp})"
+                )
+            if self.max_outside_major_length is not None:
+                expressions.extend(
+                    f"({major_name}({seat_name}) <= "
+                    f"{self.max_outside_major_length})"
+                    for major, major_name in (
+                        (Denomination.SPADES, "spades"),
+                        (Denomination.HEARTS, "hearts"),
+                    )
+                    if major is not self.suit
+                )
+            if self.longest_qualifying_suit_min_length is not None:
+                if self.suit_tie_order is None:
+                    raise RuntimeError(
+                        "A longest-suit condition must define its tie order."
+                    )
+                candidate_priority = self.suit_tie_order.index(self.suit)
+                for other_suit in _SUIT_ORDER:
+                    if other_suit is self.suit:
+                        continue
+                    other_suit_name = _SUIT_NAMES[other_suit]
+                    other_qualifiers = [
+                        f"({other_suit_name}({seat_name}) >= "
+                        f"{self.longest_qualifying_suit_min_length})",
+                    ]
+                    if self.min_suit_hcp is not None:
+                        other_qualifiers.append(
+                            f"(hcp({seat_name}, {other_suit_name}) >= "
+                            f"{self.min_suit_hcp})"
+                        )
+                    if self.max_outside_major_length is not None:
+                        other_qualifiers.extend(
+                            f"({major_name}({seat_name}) <= "
+                            f"{self.max_outside_major_length})"
+                            for major, major_name in (
+                                (Denomination.SPADES, "spades"),
+                                (Denomination.HEARTS, "hearts"),
+                            )
+                            if major is not other_suit
+                        )
+                    candidate_length = f"{_SUIT_NAMES[self.suit]}({seat_name})"
+                    other_length = f"{other_suit_name}({seat_name})"
+                    comparison = (
+                        f"({other_length} >= {candidate_length})"
+                        if self.suit_tie_order.index(other_suit) < candidate_priority
+                        else f"({other_length} > {candidate_length})"
+                    )
+                    other_qualifiers.append(comparison)
+                    expressions.append(
+                        "!(" + " && ".join(other_qualifiers) + ")"
+                    )
         if not expressions:
             return None
         return " && ".join(expressions)
@@ -454,7 +587,20 @@ def _parse_rule(value: object, index: int) -> BiddingRule:
 def _parse_condition(value: object, index: int) -> RuleCondition:
     if not isinstance(value, dict):
         raise ValueError(f"Module rule {index} when must be a TOML table.")
-    allowed = {"min_hcp", "max_hcp", "shapes", "passout_seat"}
+    allowed = {
+        "min_hcp",
+        "max_hcp",
+        "shapes",
+        "passout_seat",
+        "no_contract_bid",
+        "suit",
+        "min_suit_length",
+        "max_suit_length",
+        "min_suit_hcp",
+        "max_outside_major_length",
+        "longest_qualifying_suit_min_length",
+        "suit_tie_order",
+    }
     unknown = set(value) - allowed
     if unknown:
         raise ValueError(
@@ -481,7 +627,123 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
     passout_seat = value.get("passout_seat")
     if passout_seat is not None and not isinstance(passout_seat, bool):
         raise ValueError(f"Module rule {index} passout_seat must be a boolean.")
-    return RuleCondition(min_hcp, max_hcp, shapes, passout_seat)
+    no_contract_bid = value.get("no_contract_bid")
+    if no_contract_bid is not None and not isinstance(no_contract_bid, bool):
+        raise ValueError(f"Module rule {index} no_contract_bid must be a boolean.")
+    raw_suit = value.get("suit")
+    suit: Denomination | None = None
+    if raw_suit is not None:
+        if not isinstance(raw_suit, str):
+            raise ValueError(f"Module rule {index} suit must be a suit name.")
+        suit = _parse_suit(raw_suit, index)
+    suit_length_values = {
+        "min_suit_length": _parse_integer_condition(value, "min_suit_length", 0, 13),
+        "max_suit_length": _parse_integer_condition(value, "max_suit_length", 0, 13),
+        "min_suit_hcp": _parse_integer_condition(value, "min_suit_hcp", 0, 10),
+        "max_outside_major_length": _parse_integer_condition(
+            value, "max_outside_major_length", 0, 13
+        ),
+        "longest_qualifying_suit_min_length": _parse_integer_condition(
+            value, "longest_qualifying_suit_min_length", 0, 13
+        ),
+    }
+    suit_tie_order: tuple[Denomination, ...] | None = None
+    if "suit_tie_order" in value:
+        raw_tie_order = value["suit_tie_order"]
+        if not isinstance(raw_tie_order, list) or len(raw_tie_order) != 4:
+            raise ValueError(
+                f"Module rule {index} suit_tie_order must list all four suits."
+            )
+        suit_tie_order = tuple(
+            _parse_suit(suit_name, index) for suit_name in raw_tie_order
+        )
+        if len(set(suit_tie_order)) != 4:
+            raise ValueError(
+                f"Module rule {index} suit_tie_order must not repeat a suit."
+            )
+    if any(item is not None for item in suit_length_values.values()) and suit is None:
+        raise ValueError(f"Module rule {index} suit conditions require a suit.")
+    if (
+        suit_length_values["min_suit_length"] is not None
+        and suit_length_values["max_suit_length"] is not None
+        and suit_length_values["min_suit_length"]
+        > suit_length_values["max_suit_length"]
+    ):
+        raise ValueError("min_suit_length cannot be greater than max_suit_length.")
+    if (
+        suit_length_values["longest_qualifying_suit_min_length"] is not None
+        and (
+            suit_length_values["min_suit_hcp"] is None
+            or suit_length_values["max_outside_major_length"] is None
+            or suit_tie_order is None
+        )
+    ):
+        raise ValueError(
+            "longest_qualifying_suit_min_length requires min_suit_hcp and "
+            "max_outside_major_length and suit_tie_order."
+        )
+    if (
+        suit_tie_order is not None
+        and suit_length_values["longest_qualifying_suit_min_length"] is None
+    ):
+        raise ValueError("suit_tie_order requires longest_qualifying_suit_min_length.")
+    return RuleCondition(
+        min_hcp=min_hcp,
+        max_hcp=max_hcp,
+        shapes=shapes,
+        passout_seat=passout_seat,
+        no_contract_bid=no_contract_bid,
+        suit=suit,
+        suit_tie_order=suit_tie_order,
+        **suit_length_values,
+    )
+
+
+def _parse_integer_condition(
+    conditions: dict[str, object],
+    name: str,
+    minimum: int,
+    maximum: int,
+) -> int | None:
+    value = conditions.get(name)
+    if value is None:
+        return None
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not minimum <= value <= maximum
+    ):
+        raise ValueError(f"{name} must be an integer from {minimum} to {maximum}.")
+    return value
+
+
+def _parse_suit(value: str, index: int) -> Denomination:
+    suits = {
+        "clubs": Denomination.CLUBS,
+        "diamonds": Denomination.DIAMONDS,
+        "hearts": Denomination.HEARTS,
+        "spades": Denomination.SPADES,
+    }
+    try:
+        return suits[value.lower()]
+    except KeyError as error:
+        raise ValueError(
+            f"Module rule {index} suit must be clubs, diamonds, hearts, or spades."
+        ) from error
+
+
+def _outside_majors_qualify(
+    shape: tuple[int, int, int, int],
+    suit: Denomination,
+    maximum_length: int | None,
+) -> bool:
+    if maximum_length is None:
+        return True
+    return all(
+        shape[index] <= maximum_length
+        for index, major in ((0, Denomination.SPADES), (1, Denomination.HEARTS))
+        if major is not suit
+    )
 
 
 def _parse_hcp_range(
@@ -613,6 +875,18 @@ _SEAT_NAMES = {
     Seat.EAST: "east",
     Seat.SOUTH: "south",
     Seat.WEST: "west",
+}
+_SUIT_ORDER = (
+    Denomination.SPADES,
+    Denomination.HEARTS,
+    Denomination.DIAMONDS,
+    Denomination.CLUBS,
+)
+_SUIT_NAMES = {
+    Denomination.SPADES: "spades",
+    Denomination.HEARTS: "hearts",
+    Denomination.DIAMONDS: "diamonds",
+    Denomination.CLUBS: "clubs",
 }
 
 

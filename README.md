@@ -41,6 +41,14 @@ The 1NT and passout examples remain separate systems, each referencing its own
 module. Their rules are data in [systems/modules/](systems/modules/); the
 loader interprets the shared rule vocabulary. Existing single-system TOML
 1NT files remain loadable.
+The [traditional preempts module](systems/modules/traditional-preempts.toml)
+demonstrates suit-aware rules and can be loaded as the
+[traditional preempts system](systems/traditional-preempts.toml). It covers
+suit bids from 2D through 5D (excluding notrump and 2C), maps 6/7/8/9+
+cards to the 2/3/4/5 level, and prefers the longest qualifying suit, breaking
+ties using the S-H-D-C order declared in the module TOML. Hand profiles from
+cards include per-suit HCP; a
+profile-only hand without per-suit HCP cannot evaluate a rule that requires it.
 If `run_auction` encounters an out-of-book decision, it raises a clear error
 instead of silently inventing a call; provide that auction context to the
 model-assistant command to get a rated recommendation.
@@ -88,6 +96,8 @@ into Dealer expressions when generating a script. For example, the 1NT
 module's HCP range and shape list become `hcp(...)` and `shape(...)`
 conditions. A pass constrains the hand to the complement of that rule only
 when 1NT was legal. Auction-only conditions add no hand constraint.
+Suit-aware conditions use the same Dealer forms, for example
+`hcp(north, spades)` and `spades(north)`.
 
 Generate a script from the perspective of the seat currently due to call:
 
