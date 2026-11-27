@@ -1,5 +1,3 @@
-import os
-import shutil
 import unittest
 from pathlib import Path
 
@@ -25,12 +23,7 @@ SOUTH_NT_SEED = 20261127
 
 class DealerPipelineIntegrationTests(unittest.TestCase):
     def _provider(self) -> DealerProvider:
-        executable = os.environ.get("DEALER_EXECUTABLE") or shutil.which("dealer")
-        if executable is None:
-            self.skipTest(
-                "Hans van Staveren dealer executable not found; set DEALER_EXECUTABLE."
-            )
-        return DealerProvider(executable)
+        return DealerProvider()
 
     def test_seeded_deal_runs_through_bidding_and_returns_auction(self) -> None:
         board, = self._provider().generate(DEALER_SCRIPT, seed=SEED)

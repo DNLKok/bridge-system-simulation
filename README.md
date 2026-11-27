@@ -26,38 +26,140 @@ python -m unittest discover -s tests -v
 ```
 
 TOML parsing uses Python's standard-library `tomllib` (Python 3.11 or newer).
+Schema version 2 system files explicitly set `out_of_book` to either `"never"`
+or `"when_no_rule_matches"`. An in-book 1NT system uses
+`out_of_book = "never"` with `default_call = "PASS"`; a system that delegates
+unmatched situations to the model assistant uses
+`out_of_book = "when_no_rule_matches"` and omits `default_call`. Version 1
+files remain supported and are treated as always in book.
+If `run_auction` encounters an out-of-book decision, it raises a clear error
+instead of silently inventing a call; provide that auction context to the
+model-assistant command to get a rated recommendation.
 
 ## Generating deals with `dealer`
 
-`DealerProvider` runs the existing Hans van Staveren `dealer` executable and
-parses its PBN output. The dealer script must use an action that emits complete
-PBN records, such as `action printpbn`. Its output is streamed directly from
-the process; no temporary output file is needed. The full cards, board number,
-dealer, vulnerability, and seed are retained, and the card hands provide the
-HCP and shape profiles used by the auction.
+`DealerProvider` runs the workspace-local executable at `bin/dealer` by
+default and parses its PBN output. This bundled binary is for Linux x86-64.
+The dealer script must use an action that emits complete PBN records, such as
+`action printpbn`. Its output is streamed directly from the process; no
+temporary output file is needed. The full cards, board number, dealer,
+vulnerability, and seed are retained, and the card hands provide the HCP and
+shape profiles used by the auction.
 
 ```python
 from bridge_sim import DealerProvider, load_system, run_auction
 
 system = load_system("systems/one-no-trump-15-17.toml")
-provider = DealerProvider()  # Resolves "dealer" from PATH.
+provider = DealerProvider("bin/dealer")
 
 for board in provider.generate("dealer/input.txt", seed=42069):
     result = run_auction(board, system, system, dealer=board.dealer)
     print(board.board_number, result.transcript, result.contract)
 ```
 
-The seed is passed using dealer's `-s` option. The provider also accepts an
-explicit executable path, for example `DealerProvider("/usr/games/dealer")`.
-The end-to-end integration test uses
-[dealer/unrestricted-single-deal.txt](dealer/unrestricted-single-deal.txt);
-it skips when `dealer` is unavailable and can be pointed to an executable with
-the `DEALER_EXECUTABLE` environment variable.
+The seed is passed using the local executable's `-s` option. `DealerProvider`
+also accepts an explicit executable path when using a compatible build. The
+end-to-end integration test uses
+[dealer/unrestricted-single-deal.txt](dealer/unrestricted-single-deal.txt) and
+the workspace-local binary.
 With seed `42069`, the passout-system integration test checks for 7NTXX after
 exactly 319 auction calls.
 The [dealer/south-16hcp-4432.txt](dealer/south-16hcp-4432.txt) script and
 integration test also verify that the 1NT system reaches 1NT by South on a
 fixed-seed 16-HCP 4-4-3-2 hand.
+
+## Assisting during an auction
+
+The TOML system files remain the canonical, typed definition of each bidding
+rule. The assistant translates those fields into Dealer expressions when
+generating a script, rather than storing a second manually maintained copy of
+the rule in Dealer syntax. For example, the 1NT system's HCP and balanced-shape
+fields become the corresponding `hcp(...)` and `shape(...)` condition. A pass
+constrains the hand to the complement of that rule only when 1NT was a legal
+call. Systems whose calls are determined solely by auction state add no hand
+constraint.
+
+Generate a script from the perspective of the seat currently due to call:
+
+```sh
+python -m bridge_sim.auction_assistant \
+  --seat W \
+  --dealer N \
+  --vulnerability NS \
+  --hand 'AKQ.JT9.876.5432' \
+  --auction '1NT PASS PASS' \
+  --partner-system systems/passout-cheapest-call.toml \
+  --opponent-system systems/one-no-trump-15-17.toml \
+  --produce 1 \
+  --output /tmp/auction-assistance.txt
+dealer /tmp/auction-assistance.txt
+```
+
+The hand is written in PBN suit order (spades.hearts.diamonds.clubs). The
+generated Dealer script uses `predeal` for that exact hand, validates that the
+auction is legal and consistent with the supplied systems, and includes the
+translated hand constraints for partner and opponents. `--auction` lists calls
+from the dealer onward; use `P` or `PASS`, `X`, `XX`, and bids such as `1NT`.
+The generated script is also printed to standard output when `--output` is
+omitted.
+
+Run the model assistant over a Monte Carlo sample and solve every generated
+board with the local DDS executable. It reports an average IMP rating for every
+legal call, but uses the system's explicit call when in book and the highest-
+rated call only when the system is out of book:
+
+```sh
+python -m bridge_sim.model_assistant \
+  --seat W \
+  --dealer N \
+  --vulnerability NS \
+  --hand 'AKQ.JT9.876.5432' \
+  --auction '1NT PASS PASS' \
+  --partner-system systems/one-no-trump-15-17.toml \
+  --opponent-system systems/one-no-trump-15-17.toml \
+  --n 8 \
+  --advanced \
+  --seed 42069
+```
+
+`--n` defaults to 64. The assistant generates exactly that many auction-
+consistent deals (or reports an error if Dealer reaches its `--generate`
+limit first), runs the complete batch through DDS once, and prints JSON with
+each deal's full trick table for all seats and denominations, current system
+status, call ratings, and recommendation. A non-negative `--seed` is required
+and determines the sample reproducibly; advanced mode derives separate seeds
+for its nested samples. Advanced mode applies only when the current hand is
+out of book. It keeps the existing pass rating, but for these calls:
+
+- legal double or redouble;
+- the cheapest legal bid in each strain; and
+- the game bids 3NT, 4H, 4S, 5C, and 5D.
+
+Overlapping calls are evaluated once. All other calls retain their existing
+direct rating. For each selected call, it appends that call and a pass by the
+left-hand opponent, then runs the basic assistant once from partner's
+perspective using the partner's hand from one separate, auction-matched outer
+deal and `N` compatible random deals. The mean rating for partner's recommended
+call becomes the value for that candidate, with no sign change. A separate
+basic `N`-deal sample continues to provide pass and other direct ratings.
+This is one recursion level only. Since advanced mode evaluates each selected
+call for every outer deal, start with a smaller `--n` if runtime is a concern.
+Without `--advanced`, the assistant retains the existing rating behavior. The
+standard `--generate` limit is 10 billion attempts; override it for a particular
+run if needed. Bid ratings use the current seat as declarer and assume a double
+when the DDS result is below the contract target; otherwise the bid is undoubled.
+Double and redouble rate the standing contract at the corresponding multiplier.
+Pass rates the standing contract (assuming it is doubled if down) or zero when
+there is no contract. Pass ratings include a TODO note because this is a
+provisional model. Ratings are average IMPs versus par from the current seat's
+partnership perspective; ties prefer pass, then double, redouble, and ascending
+contract bids. `--dealer-executable` and `--dds-executable` can override the
+default binaries.
+
+The real-binary `N=16` advanced performance test is opt-in because it runs many
+nested samples. Run it with
+`RUN_ADVANCED_PERFORMANCE_TESTS=1 python -m unittest tests.test_model_assistant_performance`;
+it uses an empty auction and fixed hand and prints the elapsed time.
 
 ## Evaluating contracts with DDS
 
@@ -73,7 +175,9 @@ denomination, so the correct opening-lead perspective is handled by DDS.
 from bridge_sim import DealerProvider, load_system, run_auction_batch
 
 system = load_system("systems/one-no-trump-15-17.toml")
-boards = list(DealerProvider().generate("dealer/input.txt", seed=42069))
+boards = list(
+    DealerProvider("bin/dealer").generate("dealer/input.txt", seed=42069)
+)
 results = run_auction_batch(boards, system, system)
 
 for board, result in zip(boards, results, strict=True):

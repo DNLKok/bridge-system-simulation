@@ -23,6 +23,9 @@ _EXPECTED_DECK = {
     for suit in _PBN_SUITS
     for rank in _RANKS
 }
+_DEFAULT_DEALER_EXECUTABLE = (
+    Path(__file__).resolve().parents[1] / "bin" / "dealer"
+)
 
 
 class Vulnerability(str, Enum):
@@ -217,7 +220,10 @@ def _validate_deck(hands: Mapping[Seat, CardHand]) -> None:
 class DealerProvider:
     """Run Hans van Staveren's dealer executable and stream its PBN output."""
 
-    def __init__(self, executable: str | Path = "dealer") -> None:
+    def __init__(
+        self,
+        executable: str | Path = _DEFAULT_DEALER_EXECUTABLE,
+    ) -> None:
         self.executable = str(executable)
 
     def generate(

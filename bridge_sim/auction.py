@@ -13,7 +13,7 @@ from .model import (
     RedoubleCall,
     Seat,
 )
-from .systems import BiddingSystem
+from .systems import BiddingSystem, OutOfBookDecision
 
 
 def run_auction(
@@ -52,6 +52,11 @@ def run_auction(
             auction=tuple(entries),
             legal_calls=legal_calls,
         )
+        if call is OutOfBookDecision.OUT_OF_BOOK:
+            raise RuntimeError(
+                f"System {type(system).__name__!r} is out of book for "
+                f"{current_seat.value}; use the model assistant to choose a call."
+            )
         if call not in legal_calls:
             raise ValueError(
                 f"System {type(system).__name__!r} returned illegal call {call!s} "

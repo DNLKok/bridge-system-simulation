@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Protocol, Sequence
 
@@ -23,9 +24,13 @@ class BiddingSystem(Protocol):
         hand: HandProfile,
         auction: Sequence[AuctionEntry],
         legal_calls: frozenset[Call],
-    ) -> Call:
+    ) -> Call | OutOfBookDecision:
         """Choose a call using this hand and the public auction only."""
         ...
+
+
+class OutOfBookDecision(str, Enum):
+    OUT_OF_BOOK = "OUT_OF_BOOK"
 
 
 @dataclass(frozen=True)
@@ -36,14 +41,15 @@ class OneNoTrumpSystem:
     min_hcp: int
     max_hcp: int
     balanced_shapes: frozenset[tuple[int, int, int, int]]
-    default_call: PassCall = PassCall.PASS
+    default_call: PassCall | None = PassCall.PASS
+    out_of_book_when_unmatched: bool = False
 
     def choose_call(
         self,
         hand: HandProfile,
         auction: Sequence[AuctionEntry],
         legal_calls: frozenset[Call],
-    ) -> Call:
+    ) -> Call | OutOfBookDecision:
         del auction  # This system's only rule depends on the hand and legality.
         preferred_call = Bid(1, Denomination.NOTRUMP)
         if (
@@ -52,6 +58,10 @@ class OneNoTrumpSystem:
             and preferred_call in legal_calls
         ):
             return preferred_call
+        if self.out_of_book_when_unmatched:
+            return OutOfBookDecision.OUT_OF_BOOK
+        if self.default_call is None:
+            raise RuntimeError("An in-book system must define a default call.")
         return self.default_call
 
 
@@ -83,14 +93,22 @@ def load_system(path: str | Path) -> OneNoTrumpSystem | PassoutSystem:
     with system_path.open("rb") as system_file:
         config = tomllib.load(system_file)
 
-    common_keys = {"schema_version", "id", "version", "name", "default_call"}
+    schema_version = config.get("schema_version")
+    out_of_book_mode = _out_of_book_mode(config)
+    common_keys = {"schema_version", "id", "version", "name"}
+    if schema_version == 2:
+        common_keys.add("out_of_book")
+
     if config.get("strategy") == "passout":
+        expected = common_keys | {"strategy", "default_call"}
         _require_keys(
             config,
-            common_keys | {"strategy"},
+            expected,
             f"system file {system_path}",
         )
         _validate_metadata(config)
+        if out_of_book_mode != "never":
+            raise ValueError("The passout system must be explicitly in book.")
         if config["default_call"] != PassCall.PASS.value:
             raise ValueError("The supported system's default_call must be PASS.")
         return PassoutSystem(
@@ -99,13 +117,17 @@ def load_system(path: str | Path) -> OneNoTrumpSystem | PassoutSystem:
             name=config["name"],
         )
 
-    _require_keys(
-        config,
-        common_keys | {"rule"},
-        f"system file {system_path}",
-    )
+    expected = common_keys | {"rule"}
+    if out_of_book_mode == "never":
+        expected.add("default_call")
+    _require_keys(config, expected, f"system file {system_path}")
     _validate_metadata(config)
-    if config["default_call"] != PassCall.PASS.value:
+    default_call = (
+        config.get("default_call")
+        if out_of_book_mode == "never"
+        else None
+    )
+    if out_of_book_mode == "never" and default_call != PassCall.PASS.value:
         raise ValueError("The supported system's default_call must be PASS.")
 
     rule = config["rule"]
@@ -144,16 +166,30 @@ def load_system(path: str | Path) -> OneNoTrumpSystem | PassoutSystem:
         min_hcp=min_hcp,
         max_hcp=max_hcp,
         balanced_shapes=balanced_shapes,
+        default_call=PassCall.PASS if default_call == PassCall.PASS.value else None,
+        out_of_book_when_unmatched=out_of_book_mode
+        == "when_no_rule_matches",
     )
+
+
+def _out_of_book_mode(config: dict[str, object]) -> str:
+    if config.get("schema_version") == 1:
+        return "never"
+    mode = config.get("out_of_book")
+    if mode not in ("never", "when_no_rule_matches"):
+        raise ValueError(
+            "System out_of_book must be 'never' or 'when_no_rule_matches'."
+        )
+    return mode
 
 
 def _validate_metadata(config: dict[str, object]) -> None:
     if (
         not isinstance(config["schema_version"], int)
         or isinstance(config["schema_version"], bool)
-        or config["schema_version"] != 1
+        or config["schema_version"] not in (1, 2)
     ):
-        raise ValueError("Only system schema_version 1 is supported.")
+        raise ValueError("Only system schema_version 1 or 2 is supported.")
     if not isinstance(config["id"], str) or not config["id"].strip():
         raise ValueError("System id must be a non-empty string.")
     if not isinstance(config["version"], str) or not config["version"].strip():

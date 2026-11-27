@@ -1,7 +1,8 @@
-schema_version = 1
+schema_version = 2
 id = "balanced-15-17-1nt"
 version = "1.0.0"
 name = "Balanced 15-17 1NT or pass"
+out_of_book = "never"
 default_call = "PASS"
 
 [rule]
