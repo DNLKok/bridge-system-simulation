@@ -6,6 +6,7 @@ from typing import Iterator, Sequence
 
 from bridge_sim.deals import PBNBoard, Vulnerability, parse_pbn
 from bridge_sim.model import (
+    AuctionEntry,
     Bid,
     Contract,
     Denomination,
@@ -34,6 +35,7 @@ class FakeDealerProvider:
         self.boards = boards
         self.script: str | None = None
         self.seed: int | None = None
+        self.calls: list[tuple[str, int | None]] = []
 
     def generate(
         self,
@@ -43,6 +45,7 @@ class FakeDealerProvider:
     ) -> Iterator[PBNBoard]:
         self.script = Path(script_path).read_text(encoding="utf-8")
         self.seed = seed
+        self.calls.append((self.script, seed))
         yield from self.boards
 
 
@@ -87,6 +90,7 @@ class ModelAssistantTests(unittest.TestCase):
         solver: FakeDDS,
         *,
         n: int = DEFAULT_N,
+        advanced: bool = False,
     ) -> ModelAssistantResult:
         return run_model_assistant(
             perspective=self.board.dealer,
@@ -98,6 +102,7 @@ class ModelAssistantTests(unittest.TestCase):
             vulnerability=self.board.vulnerability,
             n=n,
             seed=20261127,
+            advanced=advanced,
             dealer_provider=provider,
             dds_solver=solver,
         )
@@ -122,6 +127,13 @@ class ModelAssistantTests(unittest.TestCase):
         self.assertEqual(result.system_call, PassCall.PASS)
         self.assertEqual(result.recommended_call, PassCall.PASS)
 
+    def test_advanced_flag_keeps_basic_ratings_when_in_book(self) -> None:
+        provider = FakeDealerProvider((self.board,))
+        result = self._run(provider, FakeDDS(), n=1, advanced=True)
+
+        self.assertFalse(result.out_of_book)
+        self.assertEqual(len(provider.calls), 1)
+
     def test_uses_requested_sample_size_in_generated_script(self) -> None:
         provider = FakeDealerProvider((self.board,) * 3)
         solver = FakeDDS()
@@ -130,6 +142,123 @@ class ModelAssistantTests(unittest.TestCase):
 
         self.assertIn("produce 3", provider.script or "")
         self.assertEqual(len(result.boards), 3)
+
+    def test_advanced_mode_uses_partner_basic_rating_for_non_pass_calls(self) -> None:
+        system_config = """\
+schema_version = 2
+id = "test-one-no-trump"
+version = "1.0.0"
+name = "Test 1NT system"
+out_of_book = "when_no_rule_matches"
+
+[rule]
+id = "open-1nt"
+call = "1NT"
+min_hcp = 7
+max_hcp = 7
+balanced_shapes = ["4333"]
+"""
+        table = {
+            denomination: {seat: 0 for seat in Seat}
+            for denomination in Denomination
+        }
+        table[Denomination.NOTRUMP][Seat.EAST] = 6
+        seed = 20261127
+
+        with TemporaryDirectory() as directory:
+            system_path = Path(directory) / "system.toml"
+            system_path.write_text(system_config, encoding="utf-8")
+            provider = FakeDealerProvider((self.board,))
+            result = run_model_assistant(
+                perspective=Seat.WEST,
+                hand=self.board.hands[Seat.WEST],
+                auction=(),
+                partner_system=system_path,
+                opponent_system=system_path,
+                dealer=Seat.WEST,
+                vulnerability=self.board.vulnerability,
+                n=1,
+                seed=seed,
+                advanced=True,
+                dealer_provider=provider,
+                dds_solver=FakeDDS(table=table),
+            )
+            basic_result = run_model_assistant(
+                perspective=Seat.WEST,
+                hand=self.board.hands[Seat.WEST],
+                auction=(),
+                partner_system=system_path,
+                opponent_system=system_path,
+                dealer=Seat.WEST,
+                vulnerability=self.board.vulnerability,
+                n=1,
+                seed=seed,
+                dealer_provider=FakeDealerProvider((self.board,)),
+                dds_solver=FakeDDS(table=table),
+            )
+            partner_result = run_model_assistant(
+                perspective=Seat.EAST,
+                hand=self.board.hands[Seat.EAST],
+                auction=(
+                    AuctionEntry(Seat.WEST, Bid(1, Denomination.CLUBS)),
+                    AuctionEntry(Seat.NORTH, PassCall.PASS),
+                ),
+                partner_system=system_path,
+                opponent_system=system_path,
+                dealer=Seat.WEST,
+                vulnerability=self.board.vulnerability,
+                n=1,
+                seed=seed + 1,
+                dealer_provider=FakeDealerProvider((self.board,)),
+                dds_solver=FakeDDS(table=table),
+                unconstrained_entries=(0, 1),
+            )
+
+        self.assertTrue(result.out_of_book)
+        self.assertEqual(
+            partner_result.recommended_call,
+            Bid(1, Denomination.NOTRUMP),
+        )
+        advanced_rating = next(
+            rating
+            for rating in result.ratings
+            if rating.call == Bid(1, Denomination.CLUBS)
+        )
+        partner_rating = next(
+            rating
+            for rating in partner_result.ratings
+            if rating.call == partner_result.recommended_call
+        )
+        self.assertEqual(
+            advanced_rating.expected_imps,
+            partner_rating.expected_imps,
+        )
+        self.assertLess(partner_rating.expected_imps, 0)
+        self.assertNotEqual(
+            advanced_rating.expected_imps,
+            next(
+                rating.expected_imps
+                for rating in basic_result.ratings
+                if rating.call == Bid(1, Denomination.CLUBS)
+            ),
+        )
+        self.assertEqual(
+            next(
+                rating.expected_imps
+                for rating in result.ratings
+                if rating.call is PassCall.PASS
+            ),
+            next(
+                rating.expected_imps
+                for rating in basic_result.ratings
+                if rating.call is PassCall.PASS
+            ),
+        )
+        self.assertEqual(
+            len(provider.calls),
+            1 + len(result.ratings) - 1,
+        )
+        self.assertEqual(len({call_seed for _, call_seed in provider.calls}), 36)
 
     def test_fails_if_dealer_cannot_produce_requested_sample_size(self) -> None:
         provider = FakeDealerProvider((self.board,))

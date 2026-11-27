@@ -84,6 +84,24 @@ class AuctionAssistantTests(unittest.TestCase):
                 vulnerability=Vulnerability.NONE,
             )
 
+    def test_skips_policy_constraints_for_hypothetical_auction_entries(self) -> None:
+        script = generate_dealer_script(
+            perspective=Seat.SOUTH,
+            hand=HAND,
+            auction=(
+                AuctionEntry(Seat.NORTH, Bid(1, Denomination.CLUBS)),
+                AuctionEntry(Seat.EAST, PassCall.PASS),
+            ),
+            partner_system=PASSOUT_SYSTEM,
+            opponent_system=PASSOUT_SYSTEM,
+            dealer=Seat.NORTH,
+            vulnerability=Vulnerability.NONE,
+            unconstrained_entries=(0, 1),
+        )
+
+        self.assertIn("action printpbn", script)
+        self.assertNotIn("condition ", script)
+
     def test_generated_script_runs_with_dealer_and_predeals_known_hand(self) -> None:
         auctions = (
             (

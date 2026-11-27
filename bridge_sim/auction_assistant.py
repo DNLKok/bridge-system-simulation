@@ -45,8 +45,9 @@ def generate_dealer_script(
     vulnerability: Vulnerability,
     produce: int = 1,
     generate: int = DEFAULT_GENERATE_LIMIT,
+    unconstrained_entries: Sequence[int] = (),
 ) -> str:
-    """Generate a Dealer script for deals consistent with a partial auction."""
+    """Generate a Dealer script, optionally skipping hypothetical call constraints."""
     if not isinstance(perspective, Seat):
         raise TypeError("perspective must be a Seat.")
     if not isinstance(hand, CardHand):
@@ -57,6 +58,15 @@ def generate_dealer_script(
         raise TypeError("vulnerability must be a Vulnerability.")
     _validate_count(produce, "produce")
     _validate_count(generate, "generate")
+    if any(
+        not isinstance(index, int)
+        or isinstance(index, bool)
+        or not 0 <= index < len(auction)
+        for index in unconstrained_entries
+    ):
+        raise ValueError(
+            "unconstrained_entries must contain valid auction entry indices."
+        )
 
     partner_policy = _load_policy(partner_system)
     opponent_policy = _load_policy(opponent_system)
@@ -66,6 +76,7 @@ def generate_dealer_script(
         dealer,
         partner_policy,
         opponent_policy,
+        frozenset(unconstrained_entries),
     )
 
     predeal_cards = ", ".join(
@@ -107,6 +118,7 @@ def _auction_conditions(
     dealer: Seat,
     partner_system: BiddingSystem,
     opponent_system: BiddingSystem,
+    unconstrained_entries: frozenset[int],
 ) -> list[tuple[str, str]]:
     conditions: list[tuple[str, str]] = []
     current_seat = dealer
@@ -116,7 +128,7 @@ def _auction_conditions(
     consecutive_passes = 0
     previous_entries: list[AuctionEntry] = []
 
-    for entry in auction:
+    for entry_index, entry in enumerate(auction):
         if not isinstance(entry, AuctionEntry):
             raise TypeError("auction must contain AuctionEntry values.")
         if not isinstance(entry.seat, Seat):
@@ -140,7 +152,10 @@ def _auction_conditions(
         if consecutive_passes == 4 and current_bid is None:
             raise ValueError("The auction already ended before its final call.")
 
-        if entry.seat is not perspective:
+        if (
+            entry.seat is not perspective
+            and entry_index not in unconstrained_entries
+        ):
             policy = (
                 partner_system
                 if _same_partnership(entry.seat, perspective)

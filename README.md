@@ -115,9 +115,10 @@ python -m bridge_sim.model_assistant \
   --vulnerability NS \
   --hand 'AKQ.JT9.876.5432' \
   --auction '1NT PASS PASS' \
-  --partner-system systems/passout-cheapest-call.toml \
+  --partner-system systems/one-no-trump-15-17.toml \
   --opponent-system systems/one-no-trump-15-17.toml \
-  --n 64 \
+  --n 8 \
+  --advanced \
   --seed 42069
 ```
 
@@ -126,10 +127,19 @@ consistent deals (or reports an error if Dealer reaches its `--generate`
 limit first), runs the complete batch through DDS once, and prints JSON with
 each deal's full trick table for all seats and denominations, current system
 status, call ratings, and recommendation. A non-negative `--seed` is required
-and reused for the whole sample. The standard
-`--generate` limit is 10 billion attempts; override it for a particular run if
-needed. Bid ratings use the current seat as declarer and assume a double when
-the DDS result is below the contract target; otherwise the bid is undoubled.
+and determines the sample reproducibly; advanced mode derives separate seeds
+for its nested samples. Advanced mode applies only when the current hand is
+out of book. It keeps the existing pass rating, but for each non-pass call it
+appends that call and a pass by the left-hand opponent, then runs the basic
+assistant once from partner's perspective using the partner's hand from the
+outer deal and `N` compatible random deals. The mean rating for partner's
+recommended call becomes the value for that outer deal, with no sign change.
+This is one recursion level only. Since advanced mode evaluates each non-pass
+call for every outer deal, start with a smaller `--n` if runtime is a concern.
+Without `--advanced`, the assistant retains the existing rating behavior. The
+standard `--generate` limit is 10 billion attempts; override it for a particular
+run if needed. Bid ratings use the current seat as declarer and assume a double
+when the DDS result is below the contract target; otherwise the bid is undoubled.
 Double and redouble rate the standing contract at the corresponding multiplier.
 Pass rates the standing contract (assuming it is doubled if down) or zero when
 there is no contract. Pass ratings include a TODO note because this is a

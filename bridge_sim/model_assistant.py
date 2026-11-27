@@ -92,12 +92,16 @@ def run_model_assistant(
     n: int = DEFAULT_N,
     seed: int,
     generate: int = DEFAULT_GENERATE_LIMIT,
+    advanced: bool = False,
     dealer_provider: _BoardProvider | None = None,
     dds_solver: _TrickTableSolver | None = None,
+    unconstrained_entries: Sequence[int] = (),
 ) -> ModelAssistantResult:
-    """Generate, evaluate, and recommend a call for an auction decision."""
+    """Rate legal calls, optionally using one partner-simulation level out of book."""
     if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
         raise ValueError("seed must be a non-negative integer.")
+    if not isinstance(advanced, bool):
+        raise TypeError("advanced must be a bool.")
     provider = dealer_provider if dealer_provider is not None else DealerProvider()
     solver = dds_solver if dds_solver is not None else TablesPBN4Solver()
     system = load_system(partner_system)
@@ -111,6 +115,7 @@ def run_model_assistant(
         vulnerability=vulnerability,
         produce=n,
         generate=generate,
+        unconstrained_entries=unconstrained_entries,
     )
 
     with tempfile.TemporaryDirectory(prefix="bridge-model-assistant-") as directory:
@@ -174,6 +179,23 @@ def run_model_assistant(
         standing_contract,
         perspective,
     )
+    if advanced and out_of_book:
+        ratings = _rate_calls_with_partner_simulations(
+            ratings,
+            boards,
+            legal_calls,
+            perspective,
+            auction,
+            partner_system,
+            opponent_system,
+            dealer,
+            vulnerability,
+            n,
+            seed,
+            generate,
+            provider,
+            solver,
+        )
     recommended_call = (
         max(ratings, key=lambda rating: rating.expected_imps).call
         if out_of_book
@@ -300,6 +322,83 @@ def _rate_calls(
             ),
         )
         for call, scores in call_scores.items()
+    )
+
+
+def _rate_calls_with_partner_simulations(
+    basic_ratings: tuple[CallRating, ...],
+    boards: Sequence[PBNBoard],
+    legal_calls: frozenset[Call],
+    perspective: Seat,
+    auction: Sequence[AuctionEntry],
+    partner_system: str | Path,
+    opponent_system: str | Path,
+    dealer: Seat,
+    vulnerability: Vulnerability,
+    n: int,
+    seed: int,
+    generate: int,
+    provider: _BoardProvider,
+    solver: _TrickTableSolver,
+) -> tuple[CallRating, ...]:
+    calls = tuple(
+        sorted(
+            (call for call in legal_calls if call is not PassCall.PASS),
+            key=_call_order,
+        )
+    )
+    if not calls:
+        return basic_ratings
+
+    scores: dict[Call, list[float]] = {call: [] for call in calls}
+    partner = perspective.next.next
+    hypothetical_auction = len(auction)
+    for board_index, board in enumerate(boards):
+        for call_index, call in enumerate(calls):
+            partner_auction = (
+                *auction,
+                AuctionEntry(perspective, call),
+                AuctionEntry(perspective.next, PassCall.PASS),
+            )
+            partner_result = run_model_assistant(
+                perspective=partner,
+                hand=board.hands[partner],
+                auction=partner_auction,
+                partner_system=partner_system,
+                opponent_system=opponent_system,
+                dealer=dealer,
+                vulnerability=vulnerability,
+                n=n,
+                seed=seed + 1 + board_index * len(calls) + call_index,
+                generate=generate,
+                advanced=False,
+                dealer_provider=provider,
+                dds_solver=solver,
+                unconstrained_entries=(
+                    hypothetical_auction,
+                    hypothetical_auction + 1,
+                ),
+            )
+            partner_rating = next(
+                (
+                    rating
+                    for rating in partner_result.ratings
+                    if rating.call == partner_result.recommended_call
+                ),
+                None,
+            )
+            if partner_rating is None:
+                raise RuntimeError(
+                    "The partner model assistant did not rate its recommended call."
+                )
+            scores[call].append(partner_rating.expected_imps)
+
+    basic_by_call = {rating.call: rating for rating in basic_ratings}
+    return tuple(
+        CallRating(call, mean(scores[call]), basic_by_call[call].note)
+        if call in scores
+        else basic_by_call[call]
+        for call in sorted(legal_calls, key=_call_order)
     )
 
 
@@ -437,6 +536,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--partner-system", required=True, type=Path)
     parser.add_argument("--opponent-system", required=True, type=Path)
     parser.add_argument("--n", type=int, default=DEFAULT_N)
+    parser.add_argument(
+        "--advanced",
+        action="store_true",
+        help=(
+            "When out of book, evaluate non-pass calls using one basic "
+            "partner-assistant simulation level."
+        ),
+    )
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument(
         "--generate",
@@ -474,6 +581,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             n=args.n,
             seed=args.seed,
             generate=args.generate,
+            advanced=args.advanced,
             dealer_provider=provider,
             dds_solver=solver,
         )
