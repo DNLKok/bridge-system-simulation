@@ -1,7 +1,7 @@
 import unittest
 
-from bridge_sim import Denomination, Seat, Vulnerability
-from bridge_sim.par import calculate_par_score_ns
+from bridge_sim import Contract, Denomination, ParResult, Seat, Vulnerability
+from bridge_sim.par import calculate_par_result
 
 
 _DDS_STRAIN_ORDER = (
@@ -36,6 +36,8 @@ class ParScoreTests(unittest.TestCase):
                 ),
                 Seat.NORTH,
                 Vulnerability.NONE,
+                Contract(2, Denomination.SPADES, Seat.EAST),
+                0,
                 -110,
             ),
             (
@@ -50,6 +52,13 @@ class ParScoreTests(unittest.TestCase):
                 ),
                 Seat.EAST,
                 Vulnerability.NORTH_SOUTH,
+                Contract(
+                    4,
+                    Denomination.SPADES,
+                    Seat.EAST,
+                    multiplier=2,
+                ),
+                -1,
                 100,
             ),
             (
@@ -64,27 +73,41 @@ class ParScoreTests(unittest.TestCase):
                 ),
                 Seat.NORTH,
                 Vulnerability.NONE,
+                Contract(
+                    5,
+                    Denomination.HEARTS,
+                    Seat.NORTH,
+                    multiplier=2,
+                ),
+                -2,
                 -300,
             ),
         )
 
-        for table, dealer, vulnerability, expected_score in cases:
+        for (
+            table,
+            dealer,
+            vulnerability,
+            expected_contract,
+            expected_delta,
+            expected_score,
+        ) in cases:
             with self.subTest(dealer=dealer, vulnerability=vulnerability):
-                self.assertEqual(
-                    calculate_par_score_ns(table, dealer, vulnerability),
-                    expected_score,
-                )
+                result = calculate_par_result(table, dealer, vulnerability)
+                self.assertEqual(result.contract, expected_contract)
+                self.assertEqual(result.trick_delta, expected_delta)
+                self.assertEqual(result.score_ns, expected_score)
 
     def test_returns_zero_when_no_side_can_make_a_contract(self) -> None:
         table = _trick_table(((6, 6, 6, 6),) * 5)
 
         self.assertEqual(
-            calculate_par_score_ns(
+            calculate_par_result(
                 table,
                 Seat.NORTH,
                 Vulnerability.NONE,
             ),
-            0,
+            ParResult(None, None, 0),
         )
 
 

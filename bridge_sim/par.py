@@ -6,7 +6,7 @@ from math import ceil
 from typing import TypeAlias
 
 from .deals import Vulnerability
-from .model import Contract, Denomination, Seat
+from .model import Contract, Denomination, ParResult, Seat
 from .scoring import calculate_score_ns
 
 TrickTable: TypeAlias = Mapping[Denomination, Mapping[Seat, int]]
@@ -35,14 +35,22 @@ class _Candidate:
     contract_number: int
     tricks: int
     score: int
+    declarer: Seat
 
 
-def calculate_par_score_ns(
+@dataclass(frozen=True)
+class _SacrificeOption:
+    contract: Contract
+    trick_delta: int
+    undertricks: int
+
+
+def calculate_par_result(
     trick_table: TrickTable,
     dealer: Seat,
     vulnerability: Vulnerability,
-) -> int:
-    """Calculate the dealer-specific double-dummy par score for North-South.
+) -> ParResult:
+    """Return one dealer-specific double-dummy par contract and NS score.
 
     The table maps each denomination to the tricks available to each seat.
     """
@@ -64,20 +72,20 @@ def calculate_par_score_ns(
         for side in candidates
     )
     if highest_numbers == (0, 0):
-        return 0
+        return ParResult(None, None, 0)
 
     if highest_numbers[0] != highest_numbers[1]:
         primacy = 0 if highest_numbers[0] > highest_numbers[1] else 1
     else:
         top_denomination = _BID_ORDER[(highest_numbers[0] - 1) % 5]
         top_tricks = trick_table[top_denomination]
+        dealer_index = _SEAT_ORDER.index(dealer)
+        top_trick_count = max(top_tricks.values())
         primacy = next(
-            _side_for_seat(_SEAT_ORDER[( _SEAT_ORDER.index(dealer) + offset) % 4])
+            _side_for_seat(_SEAT_ORDER[(dealer_index + offset) % 4])
             for offset in range(4)
-            if top_tricks[
-                _SEAT_ORDER[(_SEAT_ORDER.index(dealer) + offset) % 4]
-            ]
-            == max(top_tricks[seat] for seat in Seat)
+            if top_tricks[_SEAT_ORDER[(dealer_index + offset) % 4]]
+            == top_trick_count
         )
 
     opposite_side = 1 - primacy
@@ -105,24 +113,39 @@ def calculate_par_score_ns(
     best_plus = 0
     best_down = 0
     sacrifice_found = False
+    best_making_contract: _Candidate | None = None
+    best_sacrifice: _SacrificeOption | None = None
     for candidate in candidate_contracts:
-        down = _best_sacrifice_down(
+        sacrifice = _best_sacrifice(
             trick_table,
             candidate,
             opponent_by_denomination,
             primacy,
             dealer,
         )
+        down = 9999 if sacrifice is None else sacrifice.undertricks
         down_limit = _affordable_sacrifice(
             candidate.score,
             opposite_side,
             vulnerability,
         )
         if down <= down_limit:
-            best_down = max(best_down, down)
             sacrifice_found = True
+            if down > best_down:
+                best_down = down
+                best_sacrifice = sacrifice
         else:
-            best_plus = max(best_plus, candidate.score)
+            if (
+                candidate.score > best_plus
+                or (
+                    candidate.score == best_plus
+                    and best_making_contract is not None
+                    and candidate.contract_number
+                    < best_making_contract.contract_number
+                )
+            ):
+                best_plus = candidate.score
+                best_making_contract = candidate
 
     sacrifice_score_ns = _sacrifice_score_ns(
         best_down,
@@ -130,8 +153,46 @@ def calculate_par_score_ns(
         vulnerability,
     )
     if not sacrifice_found or best_plus > abs(sacrifice_score_ns):
-        return best_plus if primacy == 0 else -best_plus
-    return sacrifice_score_ns
+        if best_plus == 0 or best_making_contract is None:
+            return ParResult(None, None, 0)
+        contract = Contract(
+            best_making_contract.tricks - 6,
+            best_making_contract.denomination,
+            best_making_contract.declarer,
+        )
+        score_ns = best_plus if primacy == 0 else -best_plus
+        return _scored_par_result(contract, 0, vulnerability, score_ns)
+    if best_sacrifice is None:
+        return ParResult(None, None, 0)
+    return _scored_par_result(
+        best_sacrifice.contract,
+        best_sacrifice.trick_delta,
+        vulnerability,
+        sacrifice_score_ns,
+    )
+
+
+def calculate_par_score_ns(
+    trick_table: TrickTable,
+    dealer: Seat,
+    vulnerability: Vulnerability,
+) -> int:
+    """Return only the North-South par score."""
+    return calculate_par_result(trick_table, dealer, vulnerability).score_ns
+
+
+def _scored_par_result(
+    contract: Contract,
+    trick_delta: int,
+    vulnerability: Vulnerability,
+    expected_score_ns: int,
+) -> ParResult:
+    score_ns = calculate_score_ns(contract, vulnerability, trick_delta)
+    if score_ns != expected_score_ns:
+        raise RuntimeError(
+            "Calculated par contract does not produce the calculated par score."
+        )
+    return ParResult(contract, trick_delta, score_ns)
 
 
 def _validate_table(trick_table: TrickTable) -> None:
@@ -159,18 +220,14 @@ def _make_side_candidates(
 ) -> tuple[_Candidate, ...]:
     candidates: list[_Candidate] = []
     for denomination_index, denomination in enumerate(_BID_ORDER):
-        tricks = max(
-            trick_table[denomination][seat]
-            for seat in _SIDE_SEATS[side]
+        declarer = max(
+            _SIDE_SEATS[side],
+            key=lambda seat: trick_table[denomination][seat],
         )
+        tricks = trick_table[denomination][declarer]
         contract_number = 5 * (tricks - 7) + denomination_index + 1
         score = 0
         if tricks >= 7:
-            declarer = next(
-                seat
-                for seat in _SIDE_SEATS[side]
-                if trick_table[denomination][seat] == tricks
-            )
             score_ns = calculate_score_ns(
                 Contract(tricks - 6, denomination, declarer),
                 vulnerability,
@@ -178,45 +235,62 @@ def _make_side_candidates(
             )
             score = score_ns if side == 0 else -score_ns
         candidates.append(
-            _Candidate(denomination, contract_number, tricks, score)
+            _Candidate(denomination, contract_number, tricks, score, declarer)
         )
     return tuple(candidates)
 
 
-def _best_sacrifice_down(
+def _best_sacrifice(
     trick_table: TrickTable,
     candidate: _Candidate,
     opponent_by_denomination: Mapping[Denomination, _Candidate],
     declaring_side: int,
     dealer: Seat,
-) -> int:
-    best_down = 9999
+) -> _SacrificeOption | None:
+    best: _SacrificeOption | None = None
     for denomination in _BID_ORDER:
         opponent_contract = opponent_by_denomination[denomination]
         if denomination == candidate.denomination:
-            down = _same_denomination_sacrifice_down(
-                trick_table,
-                candidate,
-                declaring_side,
-                dealer,
+            options = _same_denomination_sacrifices(
+                trick_table, candidate, declaring_side, dealer
             )
         else:
             distance = candidate.contract_number - opponent_contract.contract_number
             down = ceil(distance / 5)
-        if opponent_contract.contract_number + 5 * down <= 35:
-            best_down = min(best_down, down)
-    return best_down
+            options = ()
+            if (
+                1 <= down <= 13
+                and opponent_contract.contract_number + 5 * down <= 35
+            ):
+                options = (
+                    _SacrificeOption(
+                        Contract(
+                            opponent_contract.tricks - 6 + down,
+                            denomination,
+                            opponent_contract.declarer,
+                            multiplier=2,
+                        ),
+                        -down,
+                        down,
+                    ),
+                )
+        for option in options:
+            if opponent_contract.contract_number + 5 * option.undertricks > 35:
+                continue
+            if best is None or option.undertricks < best.undertricks:
+                best = option
+    return best
 
 
-def _same_denomination_sacrifice_down(
+def _same_denomination_sacrifices(
     trick_table: TrickTable,
     candidate: _Candidate,
     declaring_side: int,
     dealer: Seat,
-) -> int:
+) -> tuple[_SacrificeOption, ...]:
     current_contract_tricks = (candidate.contract_number + 34) // 5
     increment_required = False
-    possible_downs: list[int] = []
+    options: list[_SacrificeOption] = []
     dealer_index = _SEAT_ORDER.index(dealer)
     for offset in range(4):
         seat = _SEAT_ORDER[(dealer_index + offset) % 4]
@@ -228,8 +302,22 @@ def _same_denomination_sacrifice_down(
             if difference == 0:
                 increment_required = True
         else:
-            possible_downs.append(difference + int(increment_required))
-    return min(possible_downs)
+            down = difference + int(increment_required)
+            level = current_contract_tricks - 6 + int(increment_required)
+            if 1 <= level <= 7 and 1 <= down <= 13:
+                options.append(
+                    _SacrificeOption(
+                        Contract(
+                            level,
+                            candidate.denomination,
+                            seat,
+                            multiplier=2,
+                        ),
+                        -down,
+                        down,
+                    )
+                )
+    return tuple(options)
 
 
 def _affordable_sacrifice(

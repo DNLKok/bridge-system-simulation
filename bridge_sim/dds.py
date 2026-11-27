@@ -7,7 +7,7 @@ from typing import Sequence
 
 from .deals import PBNBoard
 from .model import AuctionResult, Denomination, Seat
-from .par import calculate_par_score_ns
+from .par import calculate_par_result
 from .scoring import calculate_score_ns
 
 _TRICKS_BY_CODE = "0123456789ABCD"
@@ -73,7 +73,7 @@ class TablesPBN4Solver:
                     auction,
                     trick_delta=None,
                     score_ns=None,
-                    par_score_ns=None,
+                    par_result=None,
                 )
                 for auction in auctions
             )
@@ -126,7 +126,7 @@ class TablesPBN4Solver:
                 boards[index].vulnerability,
                 trick_delta,
             )
-            par_score_ns = calculate_par_score_ns(
+            par_result = calculate_par_result(
                 trick_table,
                 boards[index].dealer,
                 boards[index].vulnerability,
@@ -135,7 +135,7 @@ class TablesPBN4Solver:
                 auctions[index],
                 trick_delta=trick_delta,
                 score_ns=score_ns,
-                par_score_ns=par_score_ns,
+                par_result=par_result,
             )
 
         return tuple(evaluated)

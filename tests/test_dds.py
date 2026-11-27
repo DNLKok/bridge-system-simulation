@@ -72,6 +72,17 @@ class TablesPBN4SolverTests(unittest.TestCase):
             (0, 130, None),
         )
         self.assertEqual(
+            tuple(result.par_contract for result in evaluated),
+            (None, Contract(4, Denomination.CLUBS, Seat.NORTH), None),
+        )
+        self.assertEqual(
+            tuple(
+                None if result.par_result is None else result.par_result.trick_delta
+                for result in evaluated
+            ),
+            (None, 0, None),
+        )
+        self.assertEqual(
             tuple(result.score_vs_par for result in evaluated),
             (900, 0, None),
         )
@@ -117,7 +128,7 @@ class TablesPBN4SolverTests(unittest.TestCase):
             )
             self.assertTrue(
                 result.score_ns is not None
-                and result.par_score_ns is not None
+                and result.par_result is not None
                 and result.score_vs_par
                 == result.score_ns - result.par_score_ns
             )
@@ -168,7 +179,7 @@ class TablesPBN4SolverTests(unittest.TestCase):
         self.assertTrue(
             all(
                 result.score_ns is not None
-                and result.par_score_ns is not None
+                and result.par_result is not None
                 and result.score_vs_par
                 == result.score_ns - result.par_score_ns
                 for result in results

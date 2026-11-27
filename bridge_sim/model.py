@@ -101,7 +101,8 @@ class HandProfile:
 
     @property
     def canonical_shape(self) -> tuple[int, int, int, int]:
-        return tuple(sorted(self.shape, reverse=True))
+        first, second, third, fourth = sorted(self.shape, reverse=True)
+        return first, second, third, fourth
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ class Deal:
 class AuctionDeal(Protocol):
     def hand_for(self, seat: Seat) -> HandProfile:
         """Return the auction-relevant profile for a seat."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -165,12 +167,35 @@ class Contract:
 
 
 @dataclass(frozen=True)
+class ParResult:
+    contract: Contract | None
+    trick_delta: int | None
+    score_ns: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.score_ns, int) or isinstance(self.score_ns, bool):
+            raise ValueError("A par score must be an integer.")
+        if self.contract is not None and not isinstance(self.contract, Contract):
+            raise TypeError("A par contract must be a Contract.")
+        if (self.contract is None) != (self.trick_delta is None):
+            raise ValueError("Par contract and trick delta must be provided together.")
+        if self.trick_delta is not None and (
+            not isinstance(self.trick_delta, int)
+            or isinstance(self.trick_delta, bool)
+            or not -13 <= self.trick_delta <= 13
+        ):
+            raise ValueError("A par trick delta must be an integer between -13 and 13.")
+        if self.contract is None and self.score_ns != 0:
+            raise ValueError("A passed-out par must have a score of zero.")
+
+
+@dataclass(frozen=True)
 class AuctionResult:
     entries: tuple[AuctionEntry, ...]
     contract: Contract | None
     trick_delta: int | None = None
     score_ns: int | None = None
-    par_score_ns: int | None = None
+    par_result: ParResult | None = None
 
     def __post_init__(self) -> None:
         if self.trick_delta is not None and (
@@ -181,15 +206,13 @@ class AuctionResult:
             raise ValueError("A trick delta must be an integer between -13 and 13.")
         if self.contract is None and self.trick_delta is not None:
             raise ValueError("A passed-out auction cannot have a trick delta.")
-        if (self.score_ns is None) != (self.par_score_ns is None):
-            raise ValueError("Attained and par scores must be provided together.")
         if self.score_ns is not None and (
             not isinstance(self.score_ns, int)
             or isinstance(self.score_ns, bool)
-            or not isinstance(self.par_score_ns, int)
-            or isinstance(self.par_score_ns, bool)
         ):
-            raise ValueError("Attained and par scores must be integers.")
+            raise ValueError("The attained score must be an integer.")
+        if (self.score_ns is None) != (self.par_result is None):
+            raise ValueError("Attained score and par result must be provided together.")
         if self.score_ns is not None and (
             self.contract is None or self.trick_delta is None
         ):
@@ -200,10 +223,18 @@ class AuctionResult:
         return self.contract is None
 
     @property
+    def par_contract(self) -> Contract | None:
+        return None if self.par_result is None else self.par_result.contract
+
+    @property
+    def par_score_ns(self) -> int | None:
+        return None if self.par_result is None else self.par_result.score_ns
+
+    @property
     def score_vs_par(self) -> int | None:
-        if self.score_ns is None or self.par_score_ns is None:
+        if self.score_ns is None or self.par_result is None:
             return None
-        return self.score_ns - self.par_score_ns
+        return self.score_ns - self.par_result.score_ns
 
     @property
     def transcript(self) -> str:
