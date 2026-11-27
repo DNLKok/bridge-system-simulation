@@ -9,9 +9,11 @@ from .model import (
     AuctionEntry,
     Bid,
     Call,
+    DoubleCall,
     Denomination,
     HandProfile,
     PassCall,
+    RedoubleCall,
 )
 
 
@@ -53,29 +55,56 @@ class OneNoTrumpSystem:
         return self.default_call
 
 
-def load_system(path: str | Path) -> OneNoTrumpSystem:
-    """Load and validate the supported 1NT-or-pass TOML system format."""
+@dataclass(frozen=True)
+class PassoutSystem:
+    system_id: str
+    version: str
+    name: str
+
+    def choose_call(
+        self,
+        hand: HandProfile,
+        auction: Sequence[AuctionEntry],
+        legal_calls: frozenset[Call],
+    ) -> Call:
+        del hand  # This policy depends only on the public auction and legality.
+        if not _is_passout_seat(auction):
+            return PassCall.PASS
+
+        non_pass_calls = legal_calls - {PassCall.PASS}
+        if not non_pass_calls:
+            return PassCall.PASS
+        return min(non_pass_calls, key=_call_order)
+
+
+def load_system(path: str | Path) -> OneNoTrumpSystem | PassoutSystem:
+    """Load and validate a supported TOML bidding system."""
     system_path = Path(path)
     with system_path.open("rb") as system_file:
         config = tomllib.load(system_file)
 
+    common_keys = {"schema_version", "id", "version", "name", "default_call"}
+    if config.get("strategy") == "passout":
+        _require_keys(
+            config,
+            common_keys | {"strategy"},
+            f"system file {system_path}",
+        )
+        _validate_metadata(config)
+        if config["default_call"] != PassCall.PASS.value:
+            raise ValueError("The supported system's default_call must be PASS.")
+        return PassoutSystem(
+            system_id=config["id"],
+            version=config["version"],
+            name=config["name"],
+        )
+
     _require_keys(
         config,
-        {"schema_version", "id", "version", "name", "default_call", "rule"},
+        common_keys | {"rule"},
         f"system file {system_path}",
     )
-    if (
-        not isinstance(config["schema_version"], int)
-        or isinstance(config["schema_version"], bool)
-        or config["schema_version"] != 1
-    ):
-        raise ValueError("Only system schema_version 1 is supported.")
-    if not isinstance(config["id"], str) or not config["id"].strip():
-        raise ValueError("System id must be a non-empty string.")
-    if not isinstance(config["version"], str) or not config["version"].strip():
-        raise ValueError("System version must be a non-empty string.")
-    if not isinstance(config["name"], str) or not config["name"].strip():
-        raise ValueError("System name must be a non-empty string.")
+    _validate_metadata(config)
     if config["default_call"] != PassCall.PASS.value:
         raise ValueError("The supported system's default_call must be PASS.")
 
@@ -116,6 +145,43 @@ def load_system(path: str | Path) -> OneNoTrumpSystem:
         max_hcp=max_hcp,
         balanced_shapes=balanced_shapes,
     )
+
+
+def _validate_metadata(config: dict[str, object]) -> None:
+    if (
+        not isinstance(config["schema_version"], int)
+        or isinstance(config["schema_version"], bool)
+        or config["schema_version"] != 1
+    ):
+        raise ValueError("Only system schema_version 1 is supported.")
+    if not isinstance(config["id"], str) or not config["id"].strip():
+        raise ValueError("System id must be a non-empty string.")
+    if not isinstance(config["version"], str) or not config["version"].strip():
+        raise ValueError("System version must be a non-empty string.")
+    if not isinstance(config["name"], str) or not config["name"].strip():
+        raise ValueError("System name must be a non-empty string.")
+
+
+def _is_passout_seat(auction: Sequence[AuctionEntry]) -> bool:
+    trailing_passes = 0
+    for entry in reversed(auction):
+        if entry.call is not PassCall.PASS:
+            break
+        trailing_passes += 1
+
+    has_contract_bid = any(isinstance(entry.call, Bid) for entry in auction)
+    return trailing_passes == (2 if has_contract_bid else 3)
+
+
+def _call_order(call: Call) -> tuple[int, int, int]:
+    if call is DoubleCall.DOUBLE:
+        return 0, 0, 0
+    if call is RedoubleCall.REDOUBLE:
+        return 1, 0, 0
+    if isinstance(call, Bid):
+        level, denomination = call.order
+        return 2, level, denomination
+    raise ValueError(f"Cannot order pass as a non-pass call: {call!s}")
 
 
 def _parse_shape(value: object) -> tuple[int, int, int, int]:

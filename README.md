@@ -1,12 +1,16 @@
 # bridge-system-simulation
+
 A bridge bidding system simulation environment for bidding agreement optimization
 
 ## Current implementation
 
-The first auction-only implementation supports a TOML system with one rule:
-bid 1NT when the hand has 15-17 HCP, has a balanced shape, and 1NT is legal;
-otherwise pass. See
-[systems/one-no-trump-15-17.toml](systems/one-no-trump-15-17.toml).
+The auction-only implementation includes a TOML 1NT system that bids 1NT
+with 15-17 HCP and a balanced shape when legal, otherwise passing. It also
+includes a passout system that passes except when passing would end the
+auction, where it chooses the cheapest legal non-pass call (double, redouble,
+or contract bid). See
+[systems/one-no-trump-15-17.toml](systems/one-no-trump-15-17.toml) and
+[systems/passout-cheapest-call.toml](systems/passout-cheapest-call.toml).
 
 Run an auction by loading one system for each partnership and calling
 `bridge_sim.run_auction(deal, north_south_system, east_west_system)`. A

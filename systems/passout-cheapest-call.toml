@@ -1,0 +1,6 @@
+schema_version = 1
+id = "passout-cheapest-call"
+version = "1.0.0"
+name = "Pass except in passout seat"
+default_call = "PASS"
+strategy = "passout"

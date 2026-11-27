@@ -56,7 +56,21 @@ class PassCall(str, Enum):
         return self.value
 
 
-Call: TypeAlias = Bid | PassCall
+class DoubleCall(str, Enum):
+    DOUBLE = "X"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class RedoubleCall(str, Enum):
+    REDOUBLE = "XX"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+Call: TypeAlias = Bid | PassCall | DoubleCall | RedoubleCall
 
 
 @dataclass(frozen=True)
@@ -132,9 +146,22 @@ class Contract:
     level: int
     denomination: Denomination
     declarer: Seat
+    multiplier: int = 1
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.multiplier, int)
+            or isinstance(self.multiplier, bool)
+            or self.multiplier not in (1, 2, 4)
+        ):
+            raise ValueError("A contract multiplier must be 1, 2, or 4.")
 
     def __str__(self) -> str:
-        return f"{self.level}{self.denomination.value} by {self.declarer.value}"
+        suffix = {1: "", 2: "X", 4: "XX"}[self.multiplier]
+        return (
+            f"{self.level}{self.denomination.value}{suffix} "
+            f"by {self.declarer.value}"
+        )
 
 
 @dataclass(frozen=True)

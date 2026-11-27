@@ -42,9 +42,9 @@ and makes a decision reproducible from its inputs.
 
 The auction engine owns bridge call legality, turn order, and termination.
 Bidding systems choose among legal calls; they do not implement auction
-mechanics themselves. The first implementation supports pass and contract
-bids; doubles and redoubles are future work. Invalid calls and ambiguous rules
-should produce clear validation errors, not be silently ignored.
+mechanics themselves. The initial implementation supports pass, contract
+bids, doubles, and redoubles. Invalid calls and ambiguous rules should produce
+clear validation errors, not be silently ignored.
 
 ### Human-readable systems
 
@@ -230,7 +230,8 @@ that a result can be interpreted later.
 
 1. Define and test cards, hands, boards, calls, contracts, and duplicate
    scoring.
-2. Implement auction legality and termination, with fixed-deal tests.
+2. Implement auction legality and termination for passes, bids, doubles, and
+   redoubles, with fixed-deal tests.
 3. Load one simple YAML system and complete an auction while enforcing the
    information boundary.
 4. Wrap the existing deal generator and C++ solver behind Python interfaces.
