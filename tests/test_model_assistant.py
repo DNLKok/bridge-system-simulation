@@ -4,6 +4,7 @@ from typing import Iterator, Sequence
 
 from bridge_sim.deals import PBNBoard, Vulnerability, parse_pbn
 from bridge_sim.model import Denomination, Seat
+from bridge_sim.auction_assistant import DEFAULT_GENERATE_LIMIT
 from bridge_sim.model_assistant import (
     DEFAULT_N,
     ModelAssistantResult,
@@ -91,6 +92,10 @@ class ModelAssistantTests(unittest.TestCase):
         result = self._run(provider, solver)
 
         self.assertIn(f"produce {DEFAULT_N}", provider.script or "")
+        self.assertIn(
+            f"generate {DEFAULT_GENERATE_LIMIT}",
+            provider.script or "",
+        )
         self.assertEqual(provider.seed, 20261127)
         self.assertEqual(len(result.boards), DEFAULT_N)
         self.assertEqual(len(result.trick_tables), DEFAULT_N)

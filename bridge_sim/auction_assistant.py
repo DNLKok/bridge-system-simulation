@@ -31,6 +31,7 @@ _VULNERABILITY_NAMES = {
     Vulnerability.ALL: "all",
 }
 _PASSOUT_HAND = CardHand(("AKQJ", "AKQ", "AKQ", "AKQ"))
+DEFAULT_GENERATE_LIMIT = 10_000_000_000
 
 
 def generate_dealer_script(
@@ -43,7 +44,7 @@ def generate_dealer_script(
     dealer: Seat,
     vulnerability: Vulnerability,
     produce: int = 1,
-    generate: int = 1_000_000,
+    generate: int = DEFAULT_GENERATE_LIMIT,
 ) -> str:
     """Generate a Dealer script for deals consistent with a partial auction."""
     if not isinstance(perspective, Seat):
@@ -312,7 +313,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--partner-system", required=True, type=Path)
     parser.add_argument("--opponent-system", required=True, type=Path)
     parser.add_argument("--produce", type=int, default=1)
-    parser.add_argument("--generate", type=int, default=1_000_000)
+    parser.add_argument(
+        "--generate",
+        type=int,
+        default=DEFAULT_GENERATE_LIMIT,
+        help=(
+            "Maximum Dealer attempts before giving up "
+            f"(default: {DEFAULT_GENERATE_LIMIT})."
+        ),
+    )
     parser.add_argument(
         "--output",
         type=Path,

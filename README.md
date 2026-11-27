@@ -113,9 +113,10 @@ python -m bridge_sim.model_assistant \
 `--n` defaults to 64. The assistant generates exactly that many auction-
 consistent deals (or reports an error if Dealer reaches its `--generate`
 limit first), runs the complete batch through DDS once, and prints JSON with
-each deal's full trick table for all seats and denominations. Use `--seed` to
-make the deal sample reproducible; `--dealer-executable` and `--dds-executable`
-can override the default binaries.
+each deal's full trick table for all seats and denominations. The standard
+`--generate` limit is 10 billion attempts; override it for a particular run if
+needed. Use `--seed` to make the deal sample reproducible;
+`--dealer-executable` and `--dds-executable` can override the default binaries.
 
 ## Evaluating contracts with DDS
 

@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
-from .auction_assistant import _parse_auction, _parse_hand, generate_dealer_script
+from .auction_assistant import (
+    DEFAULT_GENERATE_LIMIT,
+    _parse_auction,
+    _parse_hand,
+    generate_dealer_script,
+)
 from .dds import TablesPBN4Solver
 from .deals import CardHand, DealerProvider, PBNBoard, Vulnerability
 from .model import AuctionEntry, Denomination, Seat
@@ -58,7 +63,7 @@ def run_model_assistant(
     vulnerability: Vulnerability,
     n: int = DEFAULT_N,
     seed: int | None = None,
-    generate: int = 1_000_000,
+    generate: int = DEFAULT_GENERATE_LIMIT,
     dealer_provider: _BoardProvider | None = None,
     dds_solver: _TrickTableSolver | None = None,
 ) -> ModelAssistantResult:
@@ -173,7 +178,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--opponent-system", required=True, type=Path)
     parser.add_argument("--n", type=int, default=DEFAULT_N)
     parser.add_argument("--seed", type=int)
-    parser.add_argument("--generate", type=int, default=1_000_000)
+    parser.add_argument(
+        "--generate",
+        type=int,
+        default=DEFAULT_GENERATE_LIMIT,
+        help=(
+            "Maximum Dealer attempts before giving up "
+            f"(default: {DEFAULT_GENERATE_LIMIT})."
+        ),
+    )
     parser.add_argument("--dealer-executable", type=Path)
     parser.add_argument("--dds-executable", type=Path)
     args = parser.parse_args(argv)
