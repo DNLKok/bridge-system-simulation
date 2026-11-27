@@ -17,6 +17,7 @@ from .model import (
     Seat,
 )
 from .runner import run_auction_batch
+from .scoring import calculate_score_ns
 from .systems import OneNoTrumpSystem, PassoutSystem, load_system
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "Seat",
     "TablesPBN4Solver",
     "Vulnerability",
+    "calculate_score_ns",
     "load_system",
     "parse_pbn",
     "run_auction",

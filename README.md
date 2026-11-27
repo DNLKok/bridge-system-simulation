@@ -83,3 +83,21 @@ for board, result in zip(boards, results, strict=True):
 By default, the solver uses
 `Dealer-Version-2--main/DDS_Demo/SolveTables/TablesPBN4` in this workspace.
 An alternate executable path can be supplied to `TablesPBN4Solver`.
+
+## Calculating duplicate scores
+
+`calculate_score_ns(contract, vulnerability, trick_delta)` returns the standard
+duplicate score from North-South's perspective. It accounts for the declarer's
+vulnerability, denomination, contract level, doubles/redoubles, overtricks,
+undertrick penalties, game, slam, and insult bonuses.
+
+```python
+from bridge_sim import calculate_score_ns
+
+if result.contract is not None and result.trick_delta is not None:
+    score_ns = calculate_score_ns(
+        result.contract,
+        board.vulnerability,
+        result.trick_delta,
+    )
+```
