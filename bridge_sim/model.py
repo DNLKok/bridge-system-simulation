@@ -169,6 +169,8 @@ class AuctionResult:
     entries: tuple[AuctionEntry, ...]
     contract: Contract | None
     trick_delta: int | None = None
+    score_ns: int | None = None
+    par_score_ns: int | None = None
 
     def __post_init__(self) -> None:
         if self.trick_delta is not None and (
@@ -179,10 +181,29 @@ class AuctionResult:
             raise ValueError("A trick delta must be an integer between -13 and 13.")
         if self.contract is None and self.trick_delta is not None:
             raise ValueError("A passed-out auction cannot have a trick delta.")
+        if (self.score_ns is None) != (self.par_score_ns is None):
+            raise ValueError("Attained and par scores must be provided together.")
+        if self.score_ns is not None and (
+            not isinstance(self.score_ns, int)
+            or isinstance(self.score_ns, bool)
+            or not isinstance(self.par_score_ns, int)
+            or isinstance(self.par_score_ns, bool)
+        ):
+            raise ValueError("Attained and par scores must be integers.")
+        if self.score_ns is not None and (
+            self.contract is None or self.trick_delta is None
+        ):
+            raise ValueError("Scores require a contract and a trick delta.")
 
     @property
     def passed_out(self) -> bool:
         return self.contract is None
+
+    @property
+    def score_vs_par(self) -> int | None:
+        if self.score_ns is None or self.par_score_ns is None:
+            return None
+        return self.score_ns - self.par_score_ns
 
     @property
     def transcript(self) -> str:

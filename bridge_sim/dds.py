@@ -7,6 +7,8 @@ from typing import Sequence
 
 from .deals import PBNBoard
 from .model import AuctionResult, Denomination, Seat
+from .par import calculate_par_score_ns
+from .scoring import calculate_score_ns
 
 _TRICKS_BY_CODE = "0123456789ABCD"
 _SEAT_INDEX = {
@@ -66,7 +68,15 @@ class TablesPBN4Solver:
             contract_indices.append(index)
 
         if not deal_lines:
-            return tuple(replace(auction, trick_delta=None) for auction in auctions)
+            return tuple(
+                replace(
+                    auction,
+                    trick_delta=None,
+                    score_ns=None,
+                    par_score_ns=None,
+                )
+                for auction in auctions
+            )
 
         completed = subprocess.run(
             [str(self.executable)],
@@ -100,23 +110,33 @@ class TablesPBN4Solver:
                 raise RuntimeError(
                     "TablesPBN4 output did not match the corresponding input deal."
                 )
-            table_groups = table.split(",")
-            if len(table_groups) != 4 or any(len(group) != 5 for group in table_groups):
-                raise RuntimeError("TablesPBN4 returned a malformed trick table.")
+            trick_table = _decode_trick_table(table)
 
             contract = auctions[index].contract
             if contract is None:
                 raise RuntimeError("Internal error: contract mapping was lost.")
-            encoded_tricks = table_groups[_SEAT_INDEX[contract.declarer]][
-                _STRAIN_INDEX[contract.denomination]
-            ]
-            tricks = _decode_tricks(encoded_tricks)
+            tricks = trick_table[contract.denomination][contract.declarer]
             trick_delta = tricks - (contract.level + 6)
             if not -13 <= trick_delta <= 13:
                 raise RuntimeError(
                     f"TablesPBN4 returned an invalid trick delta: {trick_delta}."
                 )
-            evaluated[index] = replace(auctions[index], trick_delta=trick_delta)
+            score_ns = calculate_score_ns(
+                contract,
+                boards[index].vulnerability,
+                trick_delta,
+            )
+            par_score_ns = calculate_par_score_ns(
+                trick_table,
+                boards[index].dealer,
+                boards[index].vulnerability,
+            )
+            evaluated[index] = replace(
+                auctions[index],
+                trick_delta=trick_delta,
+                score_ns=score_ns,
+                par_score_ns=par_score_ns,
+            )
 
         return tuple(evaluated)
 
@@ -128,3 +148,17 @@ def _decode_tricks(value: str) -> int:
         raise RuntimeError(
             f"TablesPBN4 returned an invalid trick-count code: {value!r}."
         ) from error
+
+
+def _decode_trick_table(table: str) -> dict[Denomination, dict[Seat, int]]:
+    table_groups = table.split(",")
+    if len(table_groups) != 4 or any(len(group) != 5 for group in table_groups):
+        raise RuntimeError("TablesPBN4 returned a malformed trick table.")
+
+    decoded: dict[Denomination, dict[Seat, int]] = {}
+    for denomination, strain_index in _STRAIN_INDEX.items():
+        decoded[denomination] = {
+            seat: _decode_tricks(table_groups[seat_index][strain_index])
+            for seat, seat_index in _SEAT_INDEX.items()
+        }
+    return decoded

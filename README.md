@@ -83,6 +83,10 @@ for board, result in zip(boards, results, strict=True):
 By default, the solver uses
 `Dealer-Version-2--main/DDS_Demo/SolveTables/TablesPBN4` in this workspace.
 An alternate executable path can be supplied to `TablesPBN4Solver`.
+From the complete trick table, the simulator also calculates `par_score_ns`
+using the board's dealer and vulnerability. `score_ns` is the attained score,
+and `score_vs_par` is `score_ns - par_score_ns` (positive means North-South
+outscored par).
 
 ## Calculating duplicate scores
 

@@ -63,6 +63,18 @@ class TablesPBN4SolverTests(unittest.TestCase):
             tuple(result.trick_delta for result in evaluated),
             (-9, 0, None),
         )
+        self.assertEqual(
+            tuple(result.score_ns for result in evaluated),
+            (900, 130, None),
+        )
+        self.assertEqual(
+            tuple(result.par_score_ns for result in evaluated),
+            (0, 130, None),
+        )
+        self.assertEqual(
+            tuple(result.score_vs_par for result in evaluated),
+            (900, 0, None),
+        )
 
     def test_reports_tablespbn4_process_failure(self) -> None:
         auction = AuctionResult(
@@ -102,6 +114,12 @@ class TablesPBN4SolverTests(unittest.TestCase):
             self.assertTrue(
                 result.trick_delta is not None
                 and -13 <= result.trick_delta <= 13
+            )
+            self.assertTrue(
+                result.score_ns is not None
+                and result.par_score_ns is not None
+                and result.score_vs_par
+                == result.score_ns - result.par_score_ns
             )
 
     def test_100_unrestricted_passout_auctions_have_expected_dds_overview(self) -> None:
@@ -147,6 +165,15 @@ class TablesPBN4SolverTests(unittest.TestCase):
         self.assertTrue(all(delta is not None for delta in deltas))
         trick_deltas = tuple(delta for delta in deltas if delta is not None)
         self.assertTrue(all(delta <= 0 for delta in trick_deltas))
+        self.assertTrue(
+            all(
+                result.score_ns is not None
+                and result.par_score_ns is not None
+                and result.score_vs_par
+                == result.score_ns - result.par_score_ns
+                for result in results
+            )
+        )
         overview = (
             min(trick_deltas),
             max(trick_deltas),
