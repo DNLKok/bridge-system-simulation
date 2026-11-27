@@ -1,0 +1,10 @@
+/*
+Generate 100 unrestricted deals for the batch DDS integration test.
+The fixed random seed is supplied by the test.
+*/
+
+generate 100
+produce 100
+vulnerable none
+dealer north
+action printpbn

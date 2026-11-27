@@ -1,5 +1,7 @@
 import os
+import shutil
 import subprocess
+from statistics import mean
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -7,6 +9,7 @@ from unittest.mock import patch
 from bridge_sim import (
     AuctionResult,
     Contract,
+    DealerProvider,
     Denomination,
     Seat,
     TablesPBN4Solver,
@@ -18,7 +21,9 @@ from bridge_sim import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PBN_SAMPLE = ROOT / "dealer" / "output2.txt"
+UNRESTRICTED_100_DEALS_SCRIPT = ROOT / "dealer" / "unrestricted-100-deals.txt"
 PASSOUT_SYSTEM_FILE = ROOT / "systems" / "passout-cheapest-call.toml"
+UNRESTRICTED_100_DEALS_SEED = 20261128
 
 
 class TablesPBN4SolverTests(unittest.TestCase):
@@ -94,9 +99,62 @@ class TablesPBN4SolverTests(unittest.TestCase):
         self.assertEqual(len(results), len(self.boards))
         for result in results:
             self.assertIsNotNone(result.contract)
-            self.assertIsNotNone(result.trick_delta)
-            self.assertGreaterEqual(result.trick_delta, -13)
-            self.assertLessEqual(result.trick_delta, 13)
+            self.assertTrue(
+                result.trick_delta is not None
+                and -13 <= result.trick_delta <= 13
+            )
+
+    def test_100_unrestricted_passout_auctions_have_expected_dds_overview(self) -> None:
+        dealer_executable = os.environ.get("DEALER_EXECUTABLE") or shutil.which(
+            "dealer"
+        )
+        if dealer_executable is None:
+            self.skipTest("Hans van Staveren dealer executable is unavailable.")
+
+        solver = TablesPBN4Solver()
+        if not solver.executable.is_file() or not os.access(
+            solver.executable, os.X_OK
+        ):
+            self.skipTest("Workspace TablesPBN4 executable is unavailable.")
+
+        boards = tuple(
+            DealerProvider(dealer_executable).generate(
+                UNRESTRICTED_100_DEALS_SCRIPT,
+                seed=UNRESTRICTED_100_DEALS_SEED,
+            )
+        )
+        self.assertEqual(len(boards), 100)
+        self.assertTrue(
+            all(board.seed == UNRESTRICTED_100_DEALS_SEED for board in boards)
+        )
+
+        system = load_system(PASSOUT_SYSTEM_FILE)
+        results = run_auction_batch(
+            boards,
+            system,
+            system,
+            dds_solver=solver,
+        )
+        self.assertTrue(
+            all(
+                result.contract
+                == Contract(7, Denomination.NOTRUMP, Seat.WEST, multiplier=4)
+                for result in results
+            )
+        )
+
+        deltas = tuple(result.trick_delta for result in results)
+        self.assertTrue(all(delta is not None for delta in deltas))
+        trick_deltas = tuple(delta for delta in deltas if delta is not None)
+        self.assertTrue(all(delta <= 0 for delta in trick_deltas))
+        overview = (
+            min(trick_deltas),
+            max(trick_deltas),
+            round(mean(trick_deltas), 2),
+        )
+        self.assertEqual(overview, (-13, 0, -6.95))
+        self.assertEqual(trick_deltas.count(-13), 4)
+        self.assertEqual(trick_deltas.count(0), 1)
 
 
 if __name__ == "__main__":
