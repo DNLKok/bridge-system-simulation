@@ -128,22 +128,13 @@ def run_model_assistant(
             f"Dealer produced {len(boards)} boards; requested exactly {n}. "
             "Increase the generate limit or relax the auction constraints."
         )
-    for board in boards:
-        if board.dealer is not dealer:
-            raise RuntimeError(
-                f"Dealer returned board {board.board_number} with unexpected "
-                f"dealer {board.dealer.value}."
-            )
-        if board.vulnerability is not vulnerability:
-            raise RuntimeError(
-                f"Dealer returned board {board.board_number} with unexpected "
-                f"vulnerability {board.vulnerability.value}."
-            )
-        if board.hands[perspective] != hand:
-            raise RuntimeError(
-                f"Dealer did not preserve the predealt hand for "
-                f"{perspective.value} on board {board.board_number}."
-            )
+    _validate_generated_boards(
+        boards,
+        perspective=perspective,
+        hand=hand,
+        dealer=dealer,
+        vulnerability=vulnerability,
+    )
 
     trick_tables = solver.solve_trick_tables(boards)
     if len(trick_tables) != n:
@@ -180,22 +171,36 @@ def run_model_assistant(
         perspective,
     )
     if advanced and out_of_book:
-        ratings = _rate_calls_with_partner_simulations(
-            ratings,
-            boards,
-            legal_calls,
-            perspective,
-            auction,
-            partner_system,
-            opponent_system,
-            dealer,
-            vulnerability,
-            n,
-            seed,
-            generate,
-            provider,
-            solver,
-        )
+        advanced_calls = _advanced_candidate_calls(legal_calls)
+        if advanced_calls:
+            advanced_board = _generate_advanced_outer_board(
+                provider,
+                perspective=perspective,
+                hand=hand,
+                auction=auction,
+                partner_system=partner_system,
+                opponent_system=opponent_system,
+                dealer=dealer,
+                vulnerability=vulnerability,
+                generate=generate,
+                seed=seed + n + len(advanced_calls) + 1,
+            )
+            ratings = _rate_calls_with_partner_simulations(
+                ratings,
+                advanced_board,
+                advanced_calls,
+                perspective,
+                auction,
+                partner_system,
+                opponent_system,
+                dealer,
+                vulnerability,
+                n,
+                seed,
+                generate,
+                provider,
+                solver,
+            )
     recommended_call = (
         max(ratings, key=lambda rating: rating.expected_imps).call
         if out_of_book
@@ -211,6 +216,77 @@ def run_model_assistant(
         ratings,
         recommended_call,
     )
+
+
+def _validate_generated_boards(
+    boards: Sequence[PBNBoard],
+    *,
+    perspective: Seat,
+    hand: CardHand,
+    dealer: Seat,
+    vulnerability: Vulnerability,
+) -> None:
+    for board in boards:
+        if board.dealer is not dealer:
+            raise RuntimeError(
+                f"Dealer returned board {board.board_number} with unexpected "
+                f"dealer {board.dealer.value}."
+            )
+        if board.vulnerability is not vulnerability:
+            raise RuntimeError(
+                f"Dealer returned board {board.board_number} with unexpected "
+                f"vulnerability {board.vulnerability.value}."
+            )
+        if board.hands[perspective] != hand:
+            raise RuntimeError(
+                f"Dealer did not preserve the predealt hand for "
+                f"{perspective.value} on board {board.board_number}."
+            )
+
+
+def _generate_advanced_outer_board(
+    provider: _BoardProvider,
+    *,
+    perspective: Seat,
+    hand: CardHand,
+    auction: Sequence[AuctionEntry],
+    partner_system: str | Path,
+    opponent_system: str | Path,
+    dealer: Seat,
+    vulnerability: Vulnerability,
+    generate: int,
+    seed: int,
+) -> PBNBoard:
+    script = generate_dealer_script(
+        perspective=perspective,
+        hand=hand,
+        auction=auction,
+        partner_system=partner_system,
+        opponent_system=opponent_system,
+        dealer=dealer,
+        vulnerability=vulnerability,
+        produce=1,
+        generate=generate,
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="bridge-model-assistant-advanced-"
+    ) as directory:
+        script_path = Path(directory) / "model-assistant.dealer"
+        script_path.write_text(script, encoding="utf-8")
+        boards = tuple(provider.generate(script_path, seed=seed))
+
+    if len(boards) != 1:
+        raise RuntimeError(
+            f"Dealer produced {len(boards)} advanced outer boards; requested one."
+        )
+    _validate_generated_boards(
+        boards,
+        perspective=perspective,
+        hand=hand,
+        dealer=dealer,
+        vulnerability=vulnerability,
+    )
+    return boards[0]
 
 
 def _auction_state(
@@ -327,8 +403,8 @@ def _rate_calls(
 
 def _rate_calls_with_partner_simulations(
     basic_ratings: tuple[CallRating, ...],
-    boards: Sequence[PBNBoard],
-    legal_calls: frozenset[Call],
+    board: PBNBoard,
+    calls: Sequence[Call],
     perspective: Seat,
     auction: Sequence[AuctionEntry],
     partner_system: str | Path,
@@ -341,65 +417,89 @@ def _rate_calls_with_partner_simulations(
     provider: _BoardProvider,
     solver: _TrickTableSolver,
 ) -> tuple[CallRating, ...]:
-    calls = tuple(
-        sorted(
-            (call for call in legal_calls if call is not PassCall.PASS),
-            key=_call_order,
-        )
-    )
-    if not calls:
-        return basic_ratings
-
-    scores: dict[Call, list[float]] = {call: [] for call in calls}
+    scores: dict[Call, float] = {}
     partner = perspective.next.next
     hypothetical_auction = len(auction)
-    for board_index, board in enumerate(boards):
-        for call_index, call in enumerate(calls):
-            partner_auction = (
-                *auction,
-                AuctionEntry(perspective, call),
-                AuctionEntry(perspective.next, PassCall.PASS),
+    for call_index, call in enumerate(calls):
+        partner_auction = (
+            *auction,
+            AuctionEntry(perspective, call),
+            AuctionEntry(perspective.next, PassCall.PASS),
+        )
+        partner_result = run_model_assistant(
+            perspective=partner,
+            hand=board.hands[partner],
+            auction=partner_auction,
+            partner_system=partner_system,
+            opponent_system=opponent_system,
+            dealer=dealer,
+            vulnerability=vulnerability,
+            n=n,
+            seed=seed + 1 + call_index,
+            generate=generate,
+            advanced=False,
+            dealer_provider=provider,
+            dds_solver=solver,
+            unconstrained_entries=(
+                hypothetical_auction,
+                hypothetical_auction + 1,
+            ),
+        )
+        partner_rating = next(
+            (
+                rating
+                for rating in partner_result.ratings
+                if rating.call == partner_result.recommended_call
+            ),
+            None,
+        )
+        if partner_rating is None:
+            raise RuntimeError(
+                "The partner model assistant did not rate its recommended call."
             )
-            partner_result = run_model_assistant(
-                perspective=partner,
-                hand=board.hands[partner],
-                auction=partner_auction,
-                partner_system=partner_system,
-                opponent_system=opponent_system,
-                dealer=dealer,
-                vulnerability=vulnerability,
-                n=n,
-                seed=seed + 1 + board_index * len(calls) + call_index,
-                generate=generate,
-                advanced=False,
-                dealer_provider=provider,
-                dds_solver=solver,
-                unconstrained_entries=(
-                    hypothetical_auction,
-                    hypothetical_auction + 1,
-                ),
-            )
-            partner_rating = next(
-                (
-                    rating
-                    for rating in partner_result.ratings
-                    if rating.call == partner_result.recommended_call
-                ),
-                None,
-            )
-            if partner_rating is None:
-                raise RuntimeError(
-                    "The partner model assistant did not rate its recommended call."
-                )
-            scores[call].append(partner_rating.expected_imps)
+        scores[call] = partner_rating.expected_imps
 
     basic_by_call = {rating.call: rating for rating in basic_ratings}
     return tuple(
-        CallRating(call, mean(scores[call]), basic_by_call[call].note)
+        CallRating(call, scores[call], basic_by_call[call].note)
         if call in scores
         else basic_by_call[call]
-        for call in sorted(legal_calls, key=_call_order)
+        for call in sorted(basic_by_call, key=_call_order)
     )
+
+
+def _advanced_candidate_calls(legal_calls: frozenset[Call]) -> tuple[Call, ...]:
+    candidates: set[Call] = {
+        call
+        for call in (DoubleCall.DOUBLE, RedoubleCall.REDOUBLE)
+        if call in legal_calls
+    }
+
+    for denomination in Denomination:
+        cheapest_bid = min(
+            (
+                call
+                for call in legal_calls
+                if isinstance(call, Bid) and call.denomination is denomination
+            ),
+            key=lambda call: call.order,
+            default=None,
+        )
+        if cheapest_bid is not None:
+            candidates.add(cheapest_bid)
+
+    candidates.update(
+        call
+        for call in (
+            Bid(3, Denomination.NOTRUMP),
+            Bid(4, Denomination.HEARTS),
+            Bid(4, Denomination.SPADES),
+            Bid(5, Denomination.CLUBS),
+            Bid(5, Denomination.DIAMONDS),
+        )
+        if call in legal_calls
+    )
+    return tuple(sorted(candidates, key=_call_order))
 
 
 def _score_call_ns(

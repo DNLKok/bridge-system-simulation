@@ -19,6 +19,7 @@ from bridge_sim.auction_assistant import DEFAULT_GENERATE_LIMIT
 from bridge_sim.model_assistant import (
     DEFAULT_N,
     ModelAssistantResult,
+    _advanced_candidate_calls,
     _result_as_json,
     _score_call_ns,
     run_model_assistant,
@@ -46,7 +47,12 @@ class FakeDealerProvider:
         self.script = Path(script_path).read_text(encoding="utf-8")
         self.seed = seed
         self.calls.append((self.script, seed))
-        yield from self.boards
+        requested = next(
+            int(line.split()[1])
+            for line in self.script.splitlines()
+            if line.startswith("produce ")
+        )
+        yield from self.boards[:requested]
 
 
 class FakeDDS:
@@ -134,6 +140,57 @@ class ModelAssistantTests(unittest.TestCase):
         self.assertFalse(result.out_of_book)
         self.assertEqual(len(provider.calls), 1)
 
+    def test_advanced_candidates_include_cheapest_strains_and_game_bids(self) -> None:
+        legal_calls = frozenset(
+            {
+                PassCall.PASS,
+                *(
+                    Bid(level, denomination)
+                    for level in range(1, 8)
+                    for denomination in Denomination
+                ),
+            }
+        )
+
+        self.assertEqual(
+            _advanced_candidate_calls(legal_calls),
+            (
+                Bid(1, Denomination.CLUBS),
+                Bid(1, Denomination.DIAMONDS),
+                Bid(1, Denomination.HEARTS),
+                Bid(1, Denomination.SPADES),
+                Bid(1, Denomination.NOTRUMP),
+                Bid(3, Denomination.NOTRUMP),
+                Bid(4, Denomination.HEARTS),
+                Bid(4, Denomination.SPADES),
+                Bid(5, Denomination.CLUBS),
+                Bid(5, Denomination.DIAMONDS),
+            ),
+        )
+
+    def test_advanced_candidates_include_legal_doubles_and_deduplicate_overlap(
+        self,
+    ) -> None:
+        game_bids = (
+            Bid(3, Denomination.NOTRUMP),
+            Bid(4, Denomination.HEARTS),
+            Bid(4, Denomination.SPADES),
+            Bid(5, Denomination.CLUBS),
+            Bid(5, Denomination.DIAMONDS),
+        )
+        legal_calls = frozenset(
+            {PassCall.PASS, DoubleCall.DOUBLE, RedoubleCall.REDOUBLE, *game_bids}
+        )
+
+        self.assertEqual(
+            _advanced_candidate_calls(legal_calls),
+            (
+                DoubleCall.DOUBLE,
+                RedoubleCall.REDOUBLE,
+                *game_bids,
+            ),
+        )
+
     def test_uses_requested_sample_size_in_generated_script(self) -> None:
         provider = FakeDealerProvider((self.board,) * 3)
         solver = FakeDDS()
@@ -168,7 +225,8 @@ balanced_shapes = ["4333"]
         with TemporaryDirectory() as directory:
             system_path = Path(directory) / "system.toml"
             system_path.write_text(system_config, encoding="utf-8")
-            provider = FakeDealerProvider((self.board,))
+            provider = FakeDealerProvider((self.board,) * 2)
+            solver = FakeDDS(table=table)
             result = run_model_assistant(
                 perspective=Seat.WEST,
                 hand=self.board.hands[Seat.WEST],
@@ -177,11 +235,11 @@ balanced_shapes = ["4333"]
                 opponent_system=system_path,
                 dealer=Seat.WEST,
                 vulnerability=self.board.vulnerability,
-                n=1,
+                n=2,
                 seed=seed,
                 advanced=True,
                 dealer_provider=provider,
-                dds_solver=FakeDDS(table=table),
+                dds_solver=solver,
             )
             basic_result = run_model_assistant(
                 perspective=Seat.WEST,
@@ -191,9 +249,9 @@ balanced_shapes = ["4333"]
                 opponent_system=system_path,
                 dealer=Seat.WEST,
                 vulnerability=self.board.vulnerability,
-                n=1,
+                n=2,
                 seed=seed,
-                dealer_provider=FakeDealerProvider((self.board,)),
+                dealer_provider=FakeDealerProvider((self.board,) * 2),
                 dds_solver=FakeDDS(table=table),
             )
             partner_result = run_model_assistant(
@@ -207,9 +265,9 @@ balanced_shapes = ["4333"]
                 opponent_system=system_path,
                 dealer=Seat.WEST,
                 vulnerability=self.board.vulnerability,
-                n=1,
+                n=2,
                 seed=seed + 1,
-                dealer_provider=FakeDealerProvider((self.board,)),
+                dealer_provider=FakeDealerProvider((self.board,) * 2),
                 dds_solver=FakeDDS(table=table),
                 unconstrained_entries=(0, 1),
             )
@@ -255,10 +313,33 @@ balanced_shapes = ["4333"]
             ),
         )
         self.assertEqual(
-            len(provider.calls),
-            1 + len(result.ratings) - 1,
+            next(
+                rating.expected_imps
+                for rating in result.ratings
+                if rating.call == Bid(2, Denomination.CLUBS)
+            ),
+            next(
+                rating.expected_imps
+                for rating in basic_result.ratings
+                if rating.call == Bid(2, Denomination.CLUBS)
+            ),
         )
-        self.assertEqual(len({call_seed for _, call_seed in provider.calls}), 36)
+        candidate_count = len(
+            _advanced_candidate_calls(
+                frozenset(rating.call for rating in result.ratings)
+            )
+        )
+        self.assertEqual(
+            len(provider.calls),
+            2 + candidate_count,
+        )
+        self.assertEqual(
+            len({call_seed for _, call_seed in provider.calls}),
+            2 + candidate_count,
+        )
+        self.assertEqual(solver.call_count, 1 + candidate_count)
+        self.assertIn("produce 2", provider.calls[0][0])
+        self.assertIn("produce 1", provider.calls[1][0])
 
     def test_fails_if_dealer_cannot_produce_requested_sample_size(self) -> None:
         provider = FakeDealerProvider((self.board,))

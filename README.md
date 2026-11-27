@@ -129,12 +129,20 @@ each deal's full trick table for all seats and denominations, current system
 status, call ratings, and recommendation. A non-negative `--seed` is required
 and determines the sample reproducibly; advanced mode derives separate seeds
 for its nested samples. Advanced mode applies only when the current hand is
-out of book. It keeps the existing pass rating, but for each non-pass call it
-appends that call and a pass by the left-hand opponent, then runs the basic
-assistant once from partner's perspective using the partner's hand from the
-outer deal and `N` compatible random deals. The mean rating for partner's
-recommended call becomes the value for that outer deal, with no sign change.
-This is one recursion level only. Since advanced mode evaluates each non-pass
+out of book. It keeps the existing pass rating, but for these calls:
+
+- legal double or redouble;
+- the cheapest legal bid in each strain; and
+- the game bids 3NT, 4H, 4S, 5C, and 5D.
+
+Overlapping calls are evaluated once. All other calls retain their existing
+direct rating. For each selected call, it appends that call and a pass by the
+left-hand opponent, then runs the basic assistant once from partner's
+perspective using the partner's hand from one separate, auction-matched outer
+deal and `N` compatible random deals. The mean rating for partner's recommended
+call becomes the value for that candidate, with no sign change. A separate
+basic `N`-deal sample continues to provide pass and other direct ratings.
+This is one recursion level only. Since advanced mode evaluates each selected
 call for every outer deal, start with a smaller `--n` if runtime is a concern.
 Without `--advanced`, the assistant retains the existing rating behavior. The
 standard `--generate` limit is 10 billion attempts; override it for a particular
@@ -147,6 +155,11 @@ provisional model. Ratings are average IMPs versus par from the current seat's
 partnership perspective; ties prefer pass, then double, redouble, and ascending
 contract bids. `--dealer-executable` and `--dds-executable` can override the
 default binaries.
+
+The real-binary `N=16` advanced performance test is opt-in because it runs many
+nested samples. Run it with
+`RUN_ADVANCED_PERFORMANCE_TESTS=1 python -m unittest tests.test_model_assistant_performance`;
+it uses an empty auction and fixed hand and prints the elapsed time.
 
 ## Evaluating contracts with DDS
 
