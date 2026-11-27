@@ -1,5 +1,6 @@
 from .auction import run_auction
 from .deals import CardHand, DealerProvider, PBNBoard, Vulnerability, parse_pbn
+from .dds import TablesPBN4Solver
 from .model import (
     AuctionDeal,
     AuctionEntry,
@@ -15,6 +16,7 @@ from .model import (
     RedoubleCall,
     Seat,
 )
+from .runner import run_auction_batch
 from .systems import OneNoTrumpSystem, PassoutSystem, load_system
 
 __all__ = [
@@ -36,8 +38,10 @@ __all__ = [
     "PassoutSystem",
     "RedoubleCall",
     "Seat",
+    "TablesPBN4Solver",
     "Vulnerability",
     "load_system",
     "parse_pbn",
     "run_auction",
+    "run_auction_batch",
 ]

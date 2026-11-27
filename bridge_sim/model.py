@@ -168,6 +168,17 @@ class Contract:
 class AuctionResult:
     entries: tuple[AuctionEntry, ...]
     contract: Contract | None
+    trick_delta: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.trick_delta is not None and (
+            not isinstance(self.trick_delta, int)
+            or isinstance(self.trick_delta, bool)
+            or not -13 <= self.trick_delta <= 13
+        ):
+            raise ValueError("A trick delta must be an integer between -13 and 13.")
+        if self.contract is None and self.trick_delta is not None:
+            raise ValueError("A passed-out auction cannot have a trick delta.")
 
     @property
     def passed_out(self) -> bool:
