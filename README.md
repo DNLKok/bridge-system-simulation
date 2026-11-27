@@ -59,6 +59,41 @@ The [dealer/south-16hcp-4432.txt](dealer/south-16hcp-4432.txt) script and
 integration test also verify that the 1NT system reaches 1NT by South on a
 fixed-seed 16-HCP 4-4-3-2 hand.
 
+## Assisting during an auction
+
+The TOML system files remain the canonical, typed definition of each bidding
+rule. The assistant translates those fields into Dealer expressions when
+generating a script, rather than storing a second manually maintained copy of
+the rule in Dealer syntax. For example, the 1NT system's HCP and balanced-shape
+fields become the corresponding `hcp(...)` and `shape(...)` condition. A pass
+constrains the hand to the complement of that rule only when 1NT was a legal
+call. Systems whose calls are determined solely by auction state add no hand
+constraint.
+
+Generate a script from the perspective of the seat currently due to call:
+
+```sh
+python -m bridge_sim.auction_assistant \
+  --seat W \
+  --dealer N \
+  --vulnerability NS \
+  --hand 'AKQ.JT9.876.5432' \
+  --auction '1NT PASS PASS' \
+  --partner-system systems/passout-cheapest-call.toml \
+  --opponent-system systems/one-no-trump-15-17.toml \
+  --produce 1 \
+  --output /tmp/auction-assistance.txt
+dealer /tmp/auction-assistance.txt
+```
+
+The hand is written in PBN suit order (spades.hearts.diamonds.clubs). The
+generated Dealer script uses `predeal` for that exact hand, validates that the
+auction is legal and consistent with the supplied systems, and includes the
+translated hand constraints for partner and opponents. `--auction` lists calls
+from the dealer onward; use `P` or `PASS`, `X`, `XX`, and bids such as `1NT`.
+The generated script is also printed to standard output when `--output` is
+omitted.
+
 ## Evaluating contracts with DDS
 
 `run_auction_batch` completes every auction before invoking the local
