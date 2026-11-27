@@ -1,13 +1,25 @@
+import json
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Iterator, Sequence
 
 from bridge_sim.deals import PBNBoard, Vulnerability, parse_pbn
-from bridge_sim.model import Denomination, Seat
+from bridge_sim.model import (
+    Bid,
+    Contract,
+    Denomination,
+    DoubleCall,
+    PassCall,
+    RedoubleCall,
+    Seat,
+)
 from bridge_sim.auction_assistant import DEFAULT_GENERATE_LIMIT
 from bridge_sim.model_assistant import (
     DEFAULT_N,
     ModelAssistantResult,
+    _result_as_json,
+    _score_call_ns,
     run_model_assistant,
 )
 
@@ -35,8 +47,13 @@ class FakeDealerProvider:
 
 
 class FakeDDS:
-    def __init__(self, table_count: int | None = None) -> None:
+    def __init__(
+        self,
+        table_count: int | None = None,
+        table: dict[Denomination, dict[Seat, int]] | None = None,
+    ) -> None:
         self.table_count = table_count
+        self.table = table
         self.boards: tuple[PBNBoard, ...] | None = None
         self.call_count = 0
 
@@ -51,7 +68,7 @@ class FakeDDS:
             if self.table_count is None
             else self.table_count
         )
-        table = {
+        table = self.table or {
             denomination: {seat: 0 for seat in Seat}
             for denomination in Denomination
         }
@@ -101,6 +118,9 @@ class ModelAssistantTests(unittest.TestCase):
         self.assertEqual(len(result.trick_tables), DEFAULT_N)
         self.assertEqual(solver.call_count, 1)
         self.assertEqual(solver.boards, result.boards)
+        self.assertFalse(result.out_of_book)
+        self.assertEqual(result.system_call, PassCall.PASS)
+        self.assertEqual(result.recommended_call, PassCall.PASS)
 
     def test_uses_requested_sample_size_in_generated_script(self) -> None:
         provider = FakeDealerProvider((self.board,) * 3)
@@ -126,6 +146,160 @@ class ModelAssistantTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "returned 1 trick tables"):
             self._run(provider, solver, n=2)
+
+    def test_out_of_book_recommendation_uses_ratings_and_fixed_seed(self) -> None:
+        perspective = next(
+            seat
+            for seat in Seat
+            if not (
+                15 <= self.board.hands[seat].hcp <= 17
+                and self.board.hands[seat].profile.canonical_shape
+                in {(4, 3, 3, 3), (4, 4, 3, 2), (5, 3, 3, 2)}
+            )
+        )
+        board = PBNBoard(
+            self.board.board_number,
+            perspective,
+            self.board.vulnerability,
+            self.board.hands,
+            self.board.seed,
+            self.board.tags,
+        )
+        table = {
+            denomination: {
+                seat: 13 if seat is perspective else 0
+                for seat in Seat
+            }
+            for denomination in Denomination
+        }
+        provider = FakeDealerProvider((board,) * 2)
+        solver = FakeDDS(table=table)
+        system_config = """\
+schema_version = 2
+id = "partial-one-no-trump"
+version = "1.0.0"
+name = "Partial 1NT system"
+out_of_book = "when_no_rule_matches"
+
+[rule]
+id = "open-1nt"
+call = "1NT"
+min_hcp = 15
+max_hcp = 17
+balanced_shapes = ["4333", "4432", "5332"]
+"""
+
+        with TemporaryDirectory() as directory:
+            system_path = Path(directory) / "system.toml"
+            system_path.write_text(system_config, encoding="utf-8")
+            result = run_model_assistant(
+                perspective=perspective,
+                hand=board.hands[perspective],
+                auction=(),
+                partner_system=system_path,
+                opponent_system=system_path,
+                dealer=perspective,
+                vulnerability=board.vulnerability,
+                n=2,
+                seed=20261127,
+                dealer_provider=provider,
+                dds_solver=solver,
+            )
+
+        self.assertTrue(result.out_of_book)
+        self.assertIsNone(result.system_call)
+        self.assertEqual(provider.seed, 20261127)
+        self.assertEqual(
+            result.recommended_call,
+            Bid(7, Denomination.HEARTS),
+        )
+        self.assertEqual(
+            result.recommended_call,
+            max(result.ratings, key=lambda rating: rating.expected_imps).call,
+        )
+        pass_rating = next(
+            rating for rating in result.ratings if rating.call is PassCall.PASS
+        )
+        self.assertIn("TODO", pass_rating.note or "")
+        payload = json.loads(_result_as_json(result, 20261127))
+        self.assertEqual(payload["system_status"], "out_of_book")
+        self.assertEqual(payload["recommended_call"], "7H")
+        self.assertEqual(payload["sample_size"], 2)
+        self.assertEqual(len(payload["call_ratings"]), len(result.ratings))
+
+    def test_down_contract_is_assumed_doubled_and_pass_keeps_that_score(self) -> None:
+        table = {
+            denomination: {seat: 0 for seat in Seat}
+            for denomination in Denomination
+        }
+        table[Denomination.CLUBS][Seat.NORTH] = 5
+        contract = Contract(1, Denomination.CLUBS, Seat.NORTH)
+
+        self.assertEqual(
+            _score_call_ns(
+                Bid(1, Denomination.CLUBS),
+                table,
+                Vulnerability.NONE,
+                Seat.NORTH,
+                None,
+            ),
+            -300,
+        )
+        self.assertEqual(
+            _score_call_ns(
+                PassCall.PASS,
+                table,
+                Vulnerability.NONE,
+                Seat.EAST,
+                contract,
+            ),
+            -300,
+        )
+        self.assertEqual(
+            _score_call_ns(
+                DoubleCall.DOUBLE,
+                table,
+                Vulnerability.NONE,
+                Seat.EAST,
+                contract,
+            ),
+            -300,
+        )
+        self.assertEqual(
+            _score_call_ns(
+                RedoubleCall.REDOUBLE,
+                table,
+                Vulnerability.NONE,
+                Seat.EAST,
+                Contract(1, Denomination.CLUBS, Seat.NORTH, multiplier=2),
+            ),
+            -600,
+        )
+        self.assertEqual(
+            _score_call_ns(
+                PassCall.PASS,
+                table,
+                Vulnerability.NONE,
+                Seat.NORTH,
+                None,
+            ),
+            0,
+        )
+        making_table = {
+            denomination: {seat: 0 for seat in Seat}
+            for denomination in Denomination
+        }
+        making_table[Denomination.CLUBS][Seat.NORTH] = 8
+        self.assertEqual(
+            _score_call_ns(
+                Bid(1, Denomination.CLUBS),
+                making_table,
+                Vulnerability.NONE,
+                Seat.NORTH,
+                None,
+            ),
+            90,
+        )
 
 
 if __name__ == "__main__":

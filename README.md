@@ -26,6 +26,15 @@ python -m unittest discover -s tests -v
 ```
 
 TOML parsing uses Python's standard-library `tomllib` (Python 3.11 or newer).
+Schema version 2 system files explicitly set `out_of_book` to either `"never"`
+or `"when_no_rule_matches"`. An in-book 1NT system uses
+`out_of_book = "never"` with `default_call = "PASS"`; a system that delegates
+unmatched situations to the model assistant uses
+`out_of_book = "when_no_rule_matches"` and omits `default_call`. Version 1
+files remain supported and are treated as always in book.
+If `run_auction` encounters an out-of-book decision, it raises a clear error
+instead of silently inventing a call; provide that auction context to the
+model-assistant command to get a rated recommendation.
 
 ## Generating deals with `dealer`
 
@@ -95,7 +104,9 @@ The generated script is also printed to standard output when `--output` is
 omitted.
 
 Run the model assistant over a Monte Carlo sample and solve every generated
-board with the local DDS executable:
+board with the local DDS executable. It reports an average IMP rating for every
+legal call, but uses the system's explicit call when in book and the highest-
+rated call only when the system is out of book:
 
 ```sh
 python -m bridge_sim.model_assistant \
@@ -113,10 +124,19 @@ python -m bridge_sim.model_assistant \
 `--n` defaults to 64. The assistant generates exactly that many auction-
 consistent deals (or reports an error if Dealer reaches its `--generate`
 limit first), runs the complete batch through DDS once, and prints JSON with
-each deal's full trick table for all seats and denominations. The standard
+each deal's full trick table for all seats and denominations, current system
+status, call ratings, and recommendation. A non-negative `--seed` is required
+and reused for the whole sample. The standard
 `--generate` limit is 10 billion attempts; override it for a particular run if
-needed. Use `--seed` to make the deal sample reproducible;
-`--dealer-executable` and `--dds-executable` can override the default binaries.
+needed. Bid ratings use the current seat as declarer and assume a double when
+the DDS result is below the contract target; otherwise the bid is undoubled.
+Double and redouble rate the standing contract at the corresponding multiplier.
+Pass rates the standing contract (assuming it is doubled if down) or zero when
+there is no contract. Pass ratings include a TODO note because this is a
+provisional model. Ratings are average IMPs versus par from the current seat's
+partnership perspective; ties prefer pass, then double, redouble, and ascending
+contract bids. `--dealer-executable` and `--dds-executable` can override the
+default binaries.
 
 ## Evaluating contracts with DDS
 

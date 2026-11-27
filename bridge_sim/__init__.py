@@ -21,7 +21,12 @@ from .runner import run_auction_batch
 from .par import calculate_par_result, calculate_par_score_ns
 from .imps import calculate_imps
 from .scoring import calculate_score_ns
-from .systems import OneNoTrumpSystem, PassoutSystem, load_system
+from .systems import (
+    OneNoTrumpSystem,
+    OutOfBookDecision,
+    PassoutSystem,
+    load_system,
+)
 
 __all__ = [
     "AuctionDeal",
@@ -37,6 +42,7 @@ __all__ = [
     "DoubleCall",
     "HandProfile",
     "OneNoTrumpSystem",
+    "OutOfBookDecision",
     "ParResult",
     "PBNBoard",
     "PassCall",

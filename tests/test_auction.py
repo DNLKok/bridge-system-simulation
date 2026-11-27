@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from bridge_sim import (
     DoubleCall,
     HandProfile,
     OneNoTrumpSystem,
+    OutOfBookDecision,
     PassCall,
     RedoubleCall,
     Seat,
@@ -106,6 +108,92 @@ class AuctionTests(unittest.TestCase):
             ),
             PassCall.PASS,
         )
+
+    def test_out_of_book_mode_returns_sentinel_without_a_fallback(self) -> None:
+        config = """\
+schema_version = 2
+id = "partial-one-no-trump"
+version = "1.0.0"
+name = "Partial 1NT system"
+out_of_book = "when_no_rule_matches"
+
+[rule]
+id = "open-1nt"
+call = "1NT"
+min_hcp = 15
+max_hcp = 17
+balanced_shapes = ["4333", "4432", "5332"]
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "system.toml"
+            path.write_text(config, encoding="utf-8")
+            system = load_system(path)
+
+        self.assertIsInstance(system, OneNoTrumpSystem)
+        self.assertTrue(system.out_of_book_when_unmatched)
+        self.assertIsNone(system.default_call)
+        self.assertIs(
+            system.choose_call(
+                HandProfile(10, (4, 3, 3, 3)),
+                (),
+                frozenset({PassCall.PASS, Bid(1, Denomination.NOTRUMP)}),
+            ),
+            OutOfBookDecision.OUT_OF_BOOK,
+        )
+
+    def test_schema_version_one_systems_remain_in_book(self) -> None:
+        config = """\
+schema_version = 1
+id = "legacy-one-no-trump"
+version = "1.0.0"
+name = "Legacy 1NT system"
+default_call = "PASS"
+
+[rule]
+id = "open-1nt"
+call = "1NT"
+min_hcp = 15
+max_hcp = 17
+balanced_shapes = ["4333", "4432", "5332"]
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "system.toml"
+            path.write_text(config, encoding="utf-8")
+            system = load_system(path)
+
+        self.assertIsInstance(system, OneNoTrumpSystem)
+        self.assertFalse(system.out_of_book_when_unmatched)
+        self.assertEqual(
+            system.choose_call(
+                HandProfile(10, (4, 3, 3, 3)),
+                (),
+                frozenset({PassCall.PASS}),
+            ),
+            PassCall.PASS,
+        )
+
+    def test_run_auction_reports_out_of_book_instead_of_illegal_call(self) -> None:
+        config = """\
+schema_version = 2
+id = "partial-one-no-trump"
+version = "1.0.0"
+name = "Partial 1NT system"
+out_of_book = "when_no_rule_matches"
+
+[rule]
+id = "open-1nt"
+call = "1NT"
+min_hcp = 15
+max_hcp = 17
+balanced_shapes = ["4333", "4432", "5332"]
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "system.toml"
+            path.write_text(config, encoding="utf-8")
+            system = load_system(path)
+
+        with self.assertRaisesRegex(RuntimeError, "is out of book"):
+            run_auction(profile_deal(), system, self.system)
 
     def test_two_systems_generate_complete_auction_and_contract(self) -> None:
         result = run_auction(

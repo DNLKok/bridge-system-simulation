@@ -216,6 +216,8 @@ def _call_condition(
         if rule_call in legal_calls:
             return f"!({_one_nt_condition(policy, entry.seat)})"
         return None
+    if policy.out_of_book_when_unmatched:
+        return None
     raise ValueError(
         f"Call {entry.call!s} by {entry.seat.value} cannot be made by "
         f"the {policy.name!r} system."
