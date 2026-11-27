@@ -9,10 +9,11 @@ otherwise pass. See
 [systems/one-no-trump-15-17.toml](systems/one-no-trump-15-17.toml).
 
 Run an auction by loading one system for each partnership and calling
-`bridge_sim.run_auction(deal, north_south_system, east_west_system)`. The
-`Deal` input contains one `HandProfile` per seat, with HCP and four suit
-lengths. It is an auction-only projection of an existing deal; this project
-does not generate deals or cards, or parse card-based deal formats yet.
+`bridge_sim.run_auction(deal, north_south_system, east_west_system)`. A
+profile-only `Deal` can be used for auction tests; `PBNBoard` retains full cards
+and board metadata from dealer output while exposing the same hand-profile
+interface. The project reuses `dealer` rather than implementing a deal
+generator.
 
 Run the tests with:
 
@@ -21,3 +22,26 @@ python -m unittest discover -s tests -v
 ```
 
 TOML parsing uses Python's standard-library `tomllib` (Python 3.11 or newer).
+
+## Generating deals with `dealer`
+
+`DealerProvider` runs the existing Hans van Staveren `dealer` executable and
+parses its PBN output. The dealer script must use an action that emits complete
+PBN records, such as `action printpbn`. Its output is streamed directly from
+the process; no temporary output file is needed. The full cards, board number,
+dealer, vulnerability, and seed are retained, and the card hands provide the
+HCP and shape profiles used by the auction.
+
+```python
+from bridge_sim import DealerProvider, load_system, run_auction
+
+system = load_system("systems/one-no-trump-15-17.toml")
+provider = DealerProvider()  # Resolves "dealer" from PATH.
+
+for board in provider.generate("dealer/input.txt", seed=42069):
+    result = run_auction(board, system, system, dealer=board.dealer)
+    print(board.board_number, result.transcript, result.contract)
+```
+
+The seed is passed using dealer's `-s` option. The provider also accepts an
+explicit executable path, for example `DealerProvider("/usr/games/dealer")`.

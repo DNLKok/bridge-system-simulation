@@ -157,11 +157,14 @@ unexpectedly.
 
 ## Deals, double-dummy evaluation, and scoring
 
-Keep a deal-provider interface in Python and first wrap the existing `dealer`
-program. Generate deals in batches rather than starting an external process
-for every board. Reimplement deal generation only if measurements or needed
-features justify it. Whatever generator is used, record its version,
-parameters, and seed.
+Keep a deal-provider interface in Python and wrap the existing `dealer`
+program. Its `printpbn` action can emit multiple boards in one process, so
+stream PBN records from stdout rather than starting an external process per
+board or writing a temporary output file. Parse and retain the cards, board
+number, dealer, vulnerability, and seed; derive HCP and shape from each parsed
+hand for bidding. Reimplement deal generation only if measurements or needed
+features justify it. Record the generator version, input script, parameters,
+and seed.
 
 Keep the C++ double-dummy solver behind a small Python adapter. Prefer a native
 library binding (for example `pybind11`, or a stable C interface called from

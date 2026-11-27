@@ -1,0 +1,40 @@
+generate		1000000 //Default is 1 million
+produce			3 //For testing
+
+/*
+The above conditions are upper limits.
+The program will terminate as soon as one of the two is satisfied.
+*/
+
+vulnerable		all //Can this be randomised?
+
+dealer			west //default is North
+
+predeal			south CAQ3, DK6 //Let's give south these particular cards always
+
+
+altcount 	7 2 1 //lets us set custom point counts for ace through two in order
+altcount	8 0 0 0 0 0 0 0 0 0 0 0 0 1
+
+
+northhasdiamonds = (diamonds(north) >= 5)
+northisweak = ((hcp(north) >= 5) && (hcp(north) <= 10))
+eastisboring = shape(east, 44xx + any 4333)
+southhasmysix = hascard(south, 6D)
+condition		northhasdiamonds && northisweak && eastisboring && southhasmysix
+
+/*
+condition(shape(east, 44xx + any 4333))
+*/
+/*
+The shape command includes shapes in specified order, i.e. 5431 means exactly 5 spades, 4 hearts, 3 diamonds and 1 club.
+Specify a list of shapes with the '+' operator, or exclude shapes with a '-' operator.
+Using the 'any' keyword interprets the next shape as any permutation of the suits.
+So any 4333 means any hand with a 4-card suit and three 3-card suits.
+*/
+
+//hascard(south, 6D) //Test if south was dealt the six of diamonds
+
+// action			printall //This is default
+// action			printes("South holds ",pt7(south)," controls, where A = 2, K = 1.",\n,"In addition South holds ",pt8(south)," two's.",\n)
+action				printpbn

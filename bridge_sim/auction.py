@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from .model import (
     AuctionEntry,
+    AuctionDeal,
     AuctionResult,
     Bid,
     Call,
     Contract,
-    Deal,
     Denomination,
     PassCall,
     Seat,
@@ -15,7 +15,7 @@ from .systems import BiddingSystem
 
 
 def run_auction(
-    deal: Deal,
+    deal: AuctionDeal,
     north_south_system: BiddingSystem,
     east_west_system: BiddingSystem,
     dealer: Seat = Seat.NORTH,

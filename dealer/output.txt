@@ -1,0 +1,20 @@
+[Event "Hand simulated by dealer with file input.txt, seed 130120346046599"]
+[Site "-"]
+[Generator "Dealer Version 2.0 by Hans, Henk, and JGM"]
+[Date "2026.11.27"]
+[Board "1"]
+[West "-"]
+[North "-"]
+[East "-"]
+[South "-"]
+[Dealer "W"]
+[Vulnerable "All"]
+[Deal "N:J2.QJT.AT8752.J7 853.8763.Q43.962 AQ9.K9.KJ6.AKQT3 KT764.A542.9.854"]
+[Declarer "?"]
+[Contract "?"]
+[Result "?"]
+
+Generated 76 hands
+Produced  1 hands
+Initial random seed 130120346046599
+Time needed    0.009 sec

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Mapping, TypeAlias
+from typing import Mapping, Protocol, TypeAlias
 
 
 class Seat(str, Enum):
@@ -111,6 +111,11 @@ class Deal:
 
     def hand_for(self, seat: Seat) -> HandProfile:
         return self.hands[seat]
+
+
+class AuctionDeal(Protocol):
+    def hand_for(self, seat: Seat) -> HandProfile:
+        """Return the auction-relevant profile for a seat."""
 
 
 @dataclass(frozen=True)
