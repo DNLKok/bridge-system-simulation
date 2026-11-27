@@ -23,6 +23,7 @@ class BiddingSystem(Protocol):
         legal_calls: frozenset[Call],
     ) -> Call:
         """Choose a call using this hand and the public auction only."""
+        ...
 
 
 @dataclass(frozen=True)
