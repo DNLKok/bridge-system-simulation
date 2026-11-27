@@ -86,6 +86,10 @@ class TablesPBN4SolverTests(unittest.TestCase):
             tuple(result.score_vs_par for result in evaluated),
             (900, 0, None),
         )
+        self.assertEqual(
+            tuple(result.imps_vs_par for result in evaluated),
+            (14, 0, None),
+        )
 
     def test_reports_tablespbn4_process_failure(self) -> None:
         auction = AuctionResult(

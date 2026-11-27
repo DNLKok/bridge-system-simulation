@@ -5,6 +5,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping, Protocol, TypeAlias
 
+from .imps import calculate_imps
+
 
 class Seat(str, Enum):
     NORTH = "N"
@@ -235,6 +237,13 @@ class AuctionResult:
         if self.score_ns is None or self.par_result is None:
             return None
         return self.score_ns - self.par_result.score_ns
+
+    @property
+    def imps_vs_par(self) -> int | None:
+        score_difference = self.score_vs_par
+        if score_difference is None:
+            return None
+        return calculate_imps(score_difference)
 
     @property
     def transcript(self) -> str:

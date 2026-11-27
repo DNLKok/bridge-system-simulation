@@ -90,7 +90,8 @@ North-South score. A passed-out par has no contract or trick delta and scores
 zero. The convenience properties `result.par_contract` and
 `result.par_score_ns` expose the contract and score directly. `score_ns` is the
 attained score, and `score_vs_par` is `score_ns - par_score_ns` (positive means
-North-South outscored par).
+North-South outscored par). `imps_vs_par` converts that NS-oriented difference
+to IMPs using the standard IMP scale; positive values favor North-South.
 
 ## Calculating duplicate scores
 
