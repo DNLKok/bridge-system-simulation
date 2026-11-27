@@ -27,7 +27,7 @@ _STRAIN_INDEX = {
 
 
 class TablesPBN4Solver:
-    """Batch-evaluate contracts with this workspace's TablesPBN4 executable."""
+    """Batch-evaluate boards and contracts with the workspace TablesPBN4 binary."""
 
     def __init__(self, executable: str | Path | None = None) -> None:
         self.executable = (
@@ -49,25 +49,14 @@ class TablesPBN4Solver:
         if len(boards) != len(auctions):
             raise ValueError("There must be one auction result for each board.")
 
-        deal_lines: list[str] = []
         contract_indices: list[int] = []
+        contracted_boards: list[PBNBoard] = []
         for index, (board, auction) in enumerate(zip(boards, auctions, strict=True)):
-            if auction.contract is None:
-                continue
-            deal_line = board.tags.get("Deal")
-            if deal_line is None:
-                raise ValueError(
-                    f"Board {board.board_number} has a contract but no PBN Deal tag."
-                )
-            if len(deal_line) != 69 or "\n" in deal_line or "\r" in deal_line:
-                raise ValueError(
-                    f"Board {board.board_number} does not have a one-line "
-                    "69-character PBN Deal value for TablesPBN4."
-                )
-            deal_lines.append(deal_line)
-            contract_indices.append(index)
+            if auction.contract is not None:
+                contract_indices.append(index)
+                contracted_boards.append(board)
 
-        if not deal_lines:
+        if not contracted_boards:
             return tuple(
                 replace(
                     auction,
@@ -78,40 +67,9 @@ class TablesPBN4Solver:
                 for auction in auctions
             )
 
-        completed = subprocess.run(
-            [str(self.executable)],
-            input="\n".join(deal_lines) + "\n",
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"TablesPBN4 exited with status {completed.returncode}: "
-                f"{completed.stderr.strip()}"
-            )
-
-        output_lines = [line for line in completed.stdout.splitlines() if line]
-        if len(output_lines) != len(deal_lines):
-            raise RuntimeError(
-                f"TablesPBN4 returned {len(output_lines)} result lines for "
-                f"{len(deal_lines)} input deals. stderr: {completed.stderr.strip()}"
-            )
-
+        trick_tables = self.solve_trick_tables(contracted_boards)
         evaluated = list(auctions)
-        for index, expected_deal, output_line in zip(
-            contract_indices,
-            deal_lines,
-            output_lines,
-            strict=True,
-        ):
-            output_deal, separator, table = output_line.rpartition(":")
-            if not separator or output_deal != expected_deal:
-                raise RuntimeError(
-                    "TablesPBN4 output did not match the corresponding input deal."
-                )
-            trick_table = _decode_trick_table(table)
-
+        for index, trick_table in zip(contract_indices, trick_tables, strict=True):
             contract = auctions[index].contract
             if contract is None:
                 raise RuntimeError("Internal error: contract mapping was lost.")
@@ -139,6 +97,59 @@ class TablesPBN4Solver:
             )
 
         return tuple(evaluated)
+
+    def solve_trick_tables(
+        self,
+        boards: Sequence[PBNBoard],
+    ) -> tuple[dict[Denomination, dict[Seat, int]], ...]:
+        """Return the complete double-dummy trick table for each board."""
+        deal_lines: list[str] = []
+        for board in boards:
+            deal_line = board.tags.get("Deal")
+            if deal_line is None:
+                raise ValueError(
+                    f"Board {board.board_number} has no PBN Deal tag."
+                )
+            if len(deal_line) != 69 or "\n" in deal_line or "\r" in deal_line:
+                raise ValueError(
+                    f"Board {board.board_number} does not have a one-line "
+                    "69-character PBN Deal value for TablesPBN4."
+                )
+            deal_lines.append(deal_line)
+
+        if not deal_lines:
+            return ()
+
+        completed = subprocess.run(
+            [str(self.executable)],
+            input="\n".join(deal_lines) + "\n",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"TablesPBN4 exited with status {completed.returncode}: "
+                f"{completed.stderr.strip()}"
+            )
+
+        output_lines = [line for line in completed.stdout.splitlines() if line]
+        if len(output_lines) != len(deal_lines):
+            raise RuntimeError(
+                f"TablesPBN4 returned {len(output_lines)} result lines for "
+                f"{len(deal_lines)} input deals. stderr: {completed.stderr.strip()}"
+            )
+
+        trick_tables: list[dict[Denomination, dict[Seat, int]]] = []
+        for expected_deal, output_line in zip(deal_lines, output_lines, strict=True):
+            output_deal, separator, table = output_line.rpartition(":")
+            if not separator or output_deal != expected_deal:
+                raise RuntimeError(
+                    "TablesPBN4 output did not match the corresponding input deal."
+                )
+            trick_tables.append(_decode_trick_table(table))
+
+        return tuple(trick_tables)
 
 
 def _decode_tricks(value: str) -> int:

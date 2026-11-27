@@ -31,6 +31,31 @@ class TablesPBN4SolverTests(unittest.TestCase):
         with PBN_SAMPLE.open(encoding="utf-8") as sample:
             self.boards = tuple(parse_pbn(sample))
 
+    def test_solves_complete_trick_tables_in_one_batch(self) -> None:
+        deal = self.boards[0].tags["Deal"]
+        solver = TablesPBN4Solver("mock-TablesPBN4")
+        with patch("bridge_sim.dds.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess(
+                args=["mock-TablesPBN4"],
+                returncode=0,
+                stdout=f"{deal}:01234,56789,ABCD0,01234\n",
+                stderr="",
+            )
+            trick_tables = solver.solve_trick_tables((self.boards[0],))
+
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(
+            run.call_args.kwargs["input"].splitlines(),
+            [deal],
+        )
+        table = trick_tables[0]
+        self.assertEqual(table[Denomination.SPADES][Seat.NORTH], 0)
+        self.assertEqual(table[Denomination.SPADES][Seat.EAST], 5)
+        self.assertEqual(table[Denomination.SPADES][Seat.SOUTH], 10)
+        self.assertEqual(table[Denomination.CLUBS][Seat.NORTH], 3)
+        self.assertEqual(table[Denomination.HEARTS][Seat.SOUTH], 11)
+        self.assertEqual(table[Denomination.NOTRUMP][Seat.EAST], 9)
+
     def test_evaluates_contracts_in_one_batch_and_skips_passed_out_boards(self) -> None:
         auctions = (
             AuctionResult((), Contract(3, Denomination.NOTRUMP, Seat.WEST)),

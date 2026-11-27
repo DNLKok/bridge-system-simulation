@@ -94,6 +94,29 @@ from the dealer onward; use `P` or `PASS`, `X`, `XX`, and bids such as `1NT`.
 The generated script is also printed to standard output when `--output` is
 omitted.
 
+Run the model assistant over a Monte Carlo sample and solve every generated
+board with the local DDS executable:
+
+```sh
+python -m bridge_sim.model_assistant \
+  --seat W \
+  --dealer N \
+  --vulnerability NS \
+  --hand 'AKQ.JT9.876.5432' \
+  --auction '1NT PASS PASS' \
+  --partner-system systems/passout-cheapest-call.toml \
+  --opponent-system systems/one-no-trump-15-17.toml \
+  --n 64 \
+  --seed 42069
+```
+
+`--n` defaults to 64. The assistant generates exactly that many auction-
+consistent deals (or reports an error if Dealer reaches its `--generate`
+limit first), runs the complete batch through DDS once, and prints JSON with
+each deal's full trick table for all seats and denominations. Use `--seed` to
+make the deal sample reproducible; `--dealer-executable` and `--dds-executable`
+can override the default binaries.
+
 ## Evaluating contracts with DDS
 
 `run_auction_batch` completes every auction before invoking the local
