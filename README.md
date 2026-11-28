@@ -83,8 +83,10 @@ that enable it. Run the test with:
 python -m bridge_sim.standard_test
 ```
 
-The default run generates 16 deals with seed `20261128` and writes a timestamped
-PDF under `reports/`, named
+The default run uses the current Unix timestamp in seconds as its seed, so
+separate runs started in different seconds use different seeds. To reproduce a
+run, replace `seed = "unix"` in the settings file with its reported integer
+seed. It generates 16 deals and writes a timestamped PDF under `reports/`, named
 `YYYYMMDD_HHMMSS_NS-<abbr>_EW-<abbr>.pdf`. The PDF starts with the systems and
 settings, then shows each complete deal as a compass hand diagram beside its
 complete auction. PDF rendering requires Chromium on `PATH`.

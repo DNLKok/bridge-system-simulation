@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import tomllib
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -102,7 +103,10 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
         )
 
     deal_count = _integer_setting(simulation, "deal_count", minimum=1)
-    seed = _integer_setting(simulation, "seed", minimum=0)
+    if simulation["seed"] == "unix":
+        seed = int(time.time())
+    else:
+        seed = _integer_setting(simulation, "seed", minimum=0)
     advanced = simulation["advanced_out_of_book"]
     if not isinstance(advanced, bool):
         raise ValueError("advanced_out_of_book must be a boolean.")
@@ -145,7 +149,14 @@ def run_standard_test(
     *,
     output: str | Path | None = None,
 ) -> Path:
-    settings = load_settings(config_path)
+    return _run_standard_test(load_settings(config_path), output=output)
+
+
+def _run_standard_test(
+    settings: StandardTestSettings,
+    *,
+    output: str | Path | None = None,
+) -> Path:
     generated_at = datetime.now().astimezone()
     north_south = load_system(settings.north_south_system)
     east_west = load_system(settings.east_west_system)
@@ -533,8 +544,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="override the PDF output path from the settings file",
     )
     arguments = parser.parse_args(argv)
-    output = run_standard_test(arguments.config, output=arguments.output)
     settings = load_settings(arguments.config)
+    output = _run_standard_test(settings, output=arguments.output)
     print(
         f"Generated {settings.deal_count} boards with seed {settings.seed}: "
         f"{output}"

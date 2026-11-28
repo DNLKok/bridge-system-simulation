@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from bridge_sim.deals import Vulnerability, parse_pbn
 from bridge_sim.model import (
@@ -31,10 +32,11 @@ CONFIG = ROOT / "simulation" / "standard-test.toml"
 
 class StandardTestReportTests(unittest.TestCase):
     def test_settings_pin_both_sides_seed_count_and_basic_mode(self) -> None:
-        settings = load_settings(CONFIG)
+        with patch("bridge_sim.standard_test.time.time", return_value=1_795_000_123):
+            settings = load_settings(CONFIG)
 
         self.assertEqual(settings.deal_count, 16)
-        self.assertEqual(settings.seed, 20261128)
+        self.assertEqual(settings.seed, 1_795_000_123)
         self.assertFalse(settings.advanced_out_of_book)
         self.assertEqual(
             settings.north_south_system,
@@ -52,6 +54,25 @@ class StandardTestReportTests(unittest.TestCase):
             tuple(module.module_id for module in system.modules),
             ("standard-openings", "traditional-preempts", "simple-overcalls"),
         )
+
+    def test_unix_seed_changes_each_second_and_explicit_seed_is_supported(self) -> None:
+        with patch(
+            "bridge_sim.standard_test.time.time",
+            side_effect=(1_795_000_123, 1_795_000_124),
+        ):
+            seeds = (load_settings(CONFIG).seed, load_settings(CONFIG).seed)
+        self.assertEqual(seeds, (1_795_000_123, 1_795_000_124))
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "standard-test.toml"
+            config.write_text(
+                CONFIG.read_text(encoding="utf-8").replace(
+                    'seed = "unix"',
+                    "seed = 20261128",
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(load_settings(config).seed, 20261128)
 
     def test_standard_board_rotation_repeats_after_sixteen_boards(self) -> None:
         expected_vulnerability = (
@@ -193,7 +214,7 @@ class StandardTestReportTests(unittest.TestCase):
         )
 
         self.assertIn("Deals:</span> 16", html)
-        self.assertIn("Dealer seed:</span> 20261128", html)
+        self.assertIn(f"Dealer seed:</span> {settings.seed}", html)
         self.assertIn("Advanced out-of-book logic:</span> Disabled", html)
         self.assertIn("Standard 16-board rotation", html)
         self.assertIn("North-South (STD)", html)
