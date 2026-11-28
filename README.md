@@ -153,8 +153,13 @@ decision is 64. To reproduce a run, replace `seed = "unix"` in the settings
 file with its reported integer seed. It generates 16 deals and writes a
 timestamped PDF under `reports/`, named
 `YYYYMMDD_HHMMSS_NS-<abbr>_EW-<abbr>.pdf`. The PDF starts with the systems and
-settings, then shows each complete deal as a compass hand diagram beside its
-complete auction. PDF rendering requires Chromium on `PATH`.
+settings and an outcome-statistics table on its own page (or pages); deals
+start afterward. The table includes auction outcomes and double-dummy contract
+and game availability rates. Deal-based percentages include passed-out boards,
+which are also listed separately. Statistics that require double-dummy results
+are calculated in one batch with the workspace `TablesPBN4` solver. Each deal
+is shown as a compass hand diagram beside its complete auction. PDF rendering
+requires Chromium on `PATH`.
 
 ### Conditional auction tests
 

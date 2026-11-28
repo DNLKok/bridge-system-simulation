@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from bridge_sim.deals import Vulnerability, parse_pbn
+from bridge_sim.deals import CardHand, PBNBoard, Vulnerability, parse_pbn
 from bridge_sim.model import (
     AuctionEntry,
     AuctionResult,
@@ -16,8 +16,11 @@ from bridge_sim.model import (
 )
 from bridge_sim.standard_test import (
     BoardAuction,
+    _ReportStatistic,
+    _build_report_statistics,
     _auction_headers,
     _auction_rows,
+    _calculate_report_statistics,
     _conditional_dealer_conditions,
     _conditional_dealer_script,
     _conditional_prefix_for_dealer,
@@ -32,6 +35,42 @@ from bridge_sim.systems import load_system
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "simulation" / "standard-test.toml"
 CONDITIONAL_CONFIG = ROOT / "simulation" / "conditional-test.toml"
+
+
+def _statistics_board(board_number: int) -> PBNBoard:
+    shapes = {
+        Seat.NORTH: (5, 4, 2, 2),
+        Seat.EAST: (2, 3, 4, 4),
+        Seat.SOUTH: (4, 4, 3, 2),
+        Seat.WEST: (2, 2, 4, 5),
+    }
+    ranks = "AKQJT98765432"
+    suit_cards = {seat: ["", "", "", ""] for seat in Seat}
+    for suit_index in range(4):
+        rank_offset = 0
+        for seat in (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST):
+            suit_length = shapes[seat][suit_index]
+            suit_cards[seat][suit_index] = ranks[
+                rank_offset : rank_offset + suit_length
+            ]
+            rank_offset += suit_length
+
+    return PBNBoard(
+        board_number=board_number,
+        dealer=Seat.NORTH,
+        vulnerability=Vulnerability.NONE,
+        hands={
+            seat: CardHand(
+                (
+                    suit_cards[seat][0],
+                    suit_cards[seat][1],
+                    suit_cards[seat][2],
+                    suit_cards[seat][3],
+                )
+            )
+            for seat in Seat
+        },
+    )
 
 
 class StandardTestReportTests(unittest.TestCase):
@@ -323,12 +362,16 @@ class StandardTestReportTests(unittest.TestCase):
             ),
         )
         settings = load_settings(CONFIG)
+        statistics = (
+            _ReportStatistic("Test statistic", 1, "deals", 1),
+        )
         html = _report_html(
             settings,
             load_system(settings.north_south_system),
             load_system(settings.east_west_system),
             (result,),
             datetime(2026, 11, 28, 10, 12, 42, tzinfo=timezone.utc),
+            statistics=statistics,
         )
 
         self.assertIn("Deals:</span> 16", html)
@@ -347,6 +390,10 @@ class StandardTestReportTests(unittest.TestCase):
         self.assertIn("5432", html)
         self.assertIn("1NT", html)
         self.assertIn("Result: 1NT by S", html)
+        self.assertIn("Outcome statistics", html)
+        self.assertIn("Test statistic", html)
+        self.assertIn("page-break-after: always", html)
+        self.assertLess(html.index("</header>"), html.index("Board 1"))
 
         conditional_settings = load_settings(CONDITIONAL_CONFIG)
         conditional_html = _report_html(
@@ -355,6 +402,7 @@ class StandardTestReportTests(unittest.TestCase):
             load_system(conditional_settings.east_west_system),
             (result,),
             datetime(2026, 11, 28, 10, 12, 42, tzinfo=timezone.utc),
+            statistics=statistics,
             dealer_seeds=(20261128,),
         )
         self.assertIn("Condition label:</span> SJ-2S", conditional_html)
@@ -368,6 +416,153 @@ class StandardTestReportTests(unittest.TestCase):
         )
         self.assertIn("Simulation seed:", conditional_html)
         self.assertIn("Dealer seeds (boards 1\u2013N):</span> 20261128", conditional_html)
+
+    def test_outcome_statistics_cover_dd_contracts_fits_and_passouts(self) -> None:
+        boards = tuple(_statistics_board(number) for number in range(1, 5))
+        results = (
+            BoardAuction(
+                boards[0],
+                AuctionResult((), Contract(2, Denomination.DIAMONDS, Seat.NORTH)),
+            ),
+            BoardAuction(
+                boards[1],
+                AuctionResult((), Contract(4, Denomination.SPADES, Seat.NORTH)),
+            ),
+            BoardAuction(
+                boards[2],
+                AuctionResult((), Contract(4, Denomination.HEARTS, Seat.EAST)),
+            ),
+            BoardAuction(boards[3], AuctionResult((), None)),
+        )
+        trick_tables = [
+            {denomination: {seat: 0 for seat in Seat} for denomination in Denomination}
+            for _ in range(3)
+        ]
+        trick_tables[0][Denomination.DIAMONDS][Seat.NORTH] = 8
+        trick_tables[0][Denomination.NOTRUMP][Seat.NORTH] = 9
+        trick_tables[0][Denomination.SPADES][Seat.NORTH] = 10
+        trick_tables[0][Denomination.HEARTS][Seat.SOUTH] = 10
+        trick_tables[1][Denomination.SPADES][Seat.NORTH] = 9
+        trick_tables[2][Denomination.HEARTS][Seat.EAST] = 10
+
+        statistics = {
+            statistic.label: statistic
+            for statistic in _build_report_statistics(
+                results,
+                {
+                    boards[index].board_number: table
+                    for index, table in enumerate(trick_tables)
+                },
+            )
+        }
+
+        self.assertEqual(
+            (
+                statistics["Game or higher bid by declarer"].occurrences,
+                statistics["Game or higher bid by declarer"].reference_count,
+                statistics["Game or higher bid by declarer"].percentage,
+            ),
+            (2, 4, 50.0),
+        )
+        self.assertEqual(
+            (
+                statistics["Game or higher bid and made double dummy"].occurrences,
+                statistics["Game or higher bid and made double dummy"].percentage,
+            ),
+            (1, 50.0),
+        )
+        self.assertEqual(
+            (
+                statistics[
+                    "Game available double dummy after stopping in partscore"
+                ].occurrences,
+                statistics[
+                    "Game available double dummy after stopping in partscore"
+                ].percentage,
+            ),
+            (1, 100.0),
+        )
+        self.assertEqual(
+            statistics["Declared outside an available 8+ major fit"].occurrences,
+            1,
+        )
+        self.assertEqual(
+            statistics[
+                "Played in a trump fit of 6 cards or fewer (Burn's Law)"
+            ].occurrences,
+            2,
+        )
+        self.assertEqual(
+            (
+                statistics[
+                    "Declaring side had 26+ HCP but did not bid game"
+                ].occurrences,
+                statistics[
+                    "Declaring side had 26+ HCP but did not bid game"
+                ].reference_count,
+            ),
+            (1, 2),
+        )
+        self.assertEqual(
+            (
+                statistics[
+                    "Declaring side had 21 or fewer HCP and bid game"
+                ].occurrences,
+                statistics[
+                    "Declaring side had 21 or fewer HCP and bid game"
+                ].reference_count,
+            ),
+            (1, 1),
+        )
+        self.assertEqual(
+            (
+                statistics["Bid contract made double dummy"].occurrences,
+                statistics["Bid contract made double dummy"].reference_count,
+                statistics["Bid contract made double dummy"].percentage,
+            ),
+            (2, 3, 200 / 3),
+        )
+        self.assertEqual(
+            (
+                statistics["Passed out"].occurrences,
+                statistics["Passed out"].reference_count,
+            ),
+            (1, 4),
+        )
+
+    def test_report_statistics_batch_dds_for_contracts_and_use_zero_percentages(self) -> None:
+        boards = (_statistics_board(1), _statistics_board(2))
+        results = (
+            BoardAuction(
+                boards[0],
+                AuctionResult((), Contract(2, Denomination.DIAMONDS, Seat.NORTH)),
+            ),
+            BoardAuction(boards[1], AuctionResult((), None)),
+        )
+        trick_table = {
+            denomination: {seat: 0 for seat in Seat}
+            for denomination in Denomination
+        }
+
+        with patch("bridge_sim.standard_test.TablesPBN4Solver") as solver_class:
+            solver_class.return_value.solve_trick_tables.return_value = (trick_table,)
+            statistics = _calculate_report_statistics(results)
+
+        solver_class.return_value.solve_trick_tables.assert_called_once_with((boards[0],))
+        statistics_by_label = {
+            statistic.label: statistic for statistic in statistics
+        }
+        self.assertEqual(
+            statistics_by_label["Game or higher bid and made double dummy"].percentage,
+            0.0,
+        )
+        self.assertEqual(
+            statistics_by_label[
+                "Declaring side had 21 or fewer HCP and bid game"
+            ].percentage,
+            0.0,
+        )
+        self.assertEqual(statistics_by_label["Passed out"].occurrences, 1)
 
 
 if __name__ == "__main__":

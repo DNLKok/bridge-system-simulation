@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -15,11 +16,13 @@ from typing import Sequence
 
 from .auction import run_auction
 from .deals import DealerProvider, PBNBoard, Vulnerability
+from .dds import TablesPBN4Solver
 from .model import (
     AuctionEntry,
     AuctionResult,
     Bid,
     Call,
+    Contract,
     Denomination,
     DoubleCall,
     HandProfile,
@@ -51,6 +54,19 @@ _SUIT_ROWS = (
     ("D", "&diams;", "#b00020"),
     ("C", "&clubs;", "black"),
 )
+_SUIT_INDICES = {
+    Denomination.SPADES: 0,
+    Denomination.HEARTS: 1,
+    Denomination.DIAMONDS: 2,
+    Denomination.CLUBS: 3,
+}
+_GAME_LEVELS = {
+    Denomination.NOTRUMP: 3,
+    Denomination.HEARTS: 4,
+    Denomination.SPADES: 4,
+    Denomination.CLUBS: 5,
+    Denomination.DIAMONDS: 5,
+}
 _RANK_ORDER = "AKQJT98765432"
 _DEALER_CYCLE = (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST)
 _CONDITIONAL_MAX_ATTEMPTS = 256
@@ -94,6 +110,30 @@ class StandardTestSettings:
 class BoardAuction:
     board: PBNBoard
     auction: AuctionResult
+
+
+@dataclass(frozen=True)
+class _ReportStatistic:
+    label: str
+    occurrences: int
+    reference_label: str
+    reference_count: int
+
+    @property
+    def percentage(self) -> float:
+        if self.reference_count == 0:
+            return 0.0
+        return self.occurrences * 100 / self.reference_count
+
+
+@dataclass(frozen=True)
+class _ContractOutcome:
+    game_bid: bool
+    made_double_dummy: bool
+    declaring_hcp: int
+    missed_major_fit: bool
+    short_trump_fit: bool
+    double_dummy_game_available: bool
 
 
 def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
@@ -241,12 +281,14 @@ def _run_standard_test(
             north_south,
             east_west,
         )
+        statistics = _calculate_report_statistics(results)
         document = _report_html(
             settings,
             north_south,
             east_west,
             results,
             generated_at,
+            statistics=statistics,
             dealer_seeds=dealer_seeds,
         )
         _render_pdf(document, output_path)
@@ -286,12 +328,14 @@ def _run_standard_test(
         )
         for board in boards
     )
+    statistics = _calculate_report_statistics(results)
     document = _report_html(
         settings,
         north_south,
         east_west,
         results,
         generated_at,
+        statistics=statistics,
     )
     _render_pdf(document, output_path)
     return output_path
@@ -631,6 +675,179 @@ def _output_filename(
     return filename
 
 
+def _calculate_report_statistics(
+    results: Sequence[BoardAuction],
+) -> tuple[_ReportStatistic, ...]:
+    contracted_results = tuple(
+        result for result in results if result.auction.contract is not None
+    )
+    trick_tables = TablesPBN4Solver().solve_trick_tables(
+        tuple(result.board for result in contracted_results)
+    )
+    tables_by_board = {
+        result.board.board_number: trick_table
+        for result, trick_table in zip(
+            contracted_results,
+            trick_tables,
+            strict=True,
+        )
+    }
+    return _build_report_statistics(results, tables_by_board)
+
+
+def _build_report_statistics(
+    results: Sequence[BoardAuction],
+    trick_tables: Mapping[
+        int,
+        Mapping[Denomination, Mapping[Seat, int]],
+    ],
+) -> tuple[_ReportStatistic, ...]:
+    outcomes: list[_ContractOutcome] = []
+    for result in results:
+        contract = result.auction.contract
+        if contract is None:
+            continue
+
+        trick_table = trick_tables[result.board.board_number]
+        declaring_side = (contract.declarer, contract.declarer.next.next)
+        declaring_hcp = sum(
+            result.board.hand_for(seat).hcp for seat in declaring_side
+        )
+        combined_lengths = {
+            denomination: sum(
+                result.board.hand_for(seat).shape[suit_index]
+                for seat in declaring_side
+            )
+            for denomination, suit_index in _SUIT_INDICES.items()
+        }
+        major_fits = {
+            denomination
+            for denomination in (Denomination.SPADES, Denomination.HEARTS)
+            if combined_lengths[denomination] >= 8
+        }
+        double_dummy_game_available = any(
+            max(trick_table[denomination][seat] for seat in declaring_side)
+            >= game_level + 6
+            for denomination, game_level in _GAME_LEVELS.items()
+        )
+        outcomes.append(
+            _ContractOutcome(
+                game_bid=_is_game_or_higher(contract),
+                made_double_dummy=(
+                    trick_table[contract.denomination][contract.declarer]
+                    >= contract.level + 6
+                ),
+                declaring_hcp=declaring_hcp,
+                missed_major_fit=(
+                    bool(major_fits)
+                    and contract.denomination not in major_fits
+                ),
+                short_trump_fit=(
+                    contract.denomination is not Denomination.NOTRUMP
+                    and combined_lengths[contract.denomination] <= 6
+                ),
+                double_dummy_game_available=double_dummy_game_available,
+            )
+        )
+
+    deal_count = len(results)
+    contract_count = len(outcomes)
+    game_bid_count = sum(outcome.game_bid for outcome in outcomes)
+    partscore_count = sum(not outcome.game_bid for outcome in outcomes)
+    high_hcp_outcomes = tuple(
+        outcome for outcome in outcomes if outcome.declaring_hcp >= 26
+    )
+    low_hcp_outcomes = tuple(
+        outcome for outcome in outcomes if outcome.declaring_hcp <= 21
+    )
+    passed_out_count = deal_count - contract_count
+
+    return (
+        _ReportStatistic(
+            "Game or higher bid by declarer",
+            game_bid_count,
+            "deals",
+            deal_count,
+        ),
+        _ReportStatistic(
+            "Game or higher bid and made double dummy",
+            sum(
+                outcome.game_bid and outcome.made_double_dummy
+                for outcome in outcomes
+            ),
+            "game-or-higher contracts",
+            game_bid_count,
+        ),
+        _ReportStatistic(
+            "Declarer stopped in partscore",
+            partscore_count,
+            "deals",
+            deal_count,
+        ),
+        _ReportStatistic(
+            "Game available double dummy after stopping in partscore",
+            sum(
+                not outcome.game_bid
+                and outcome.double_dummy_game_available
+                for outcome in outcomes
+            ),
+            "partscore contracts",
+            partscore_count,
+        ),
+        _ReportStatistic(
+            "North-South declared",
+            sum(
+                result.auction.contract is not None
+                and result.auction.contract.declarer
+                in (Seat.NORTH, Seat.SOUTH)
+                for result in results
+            ),
+            "deals",
+            deal_count,
+        ),
+        _ReportStatistic(
+            "Declared outside an available 8+ major fit",
+            sum(outcome.missed_major_fit for outcome in outcomes),
+            "deals",
+            deal_count,
+        ),
+        _ReportStatistic(
+            "Played in a trump fit of 6 cards or fewer (Burn's Law)",
+            sum(outcome.short_trump_fit for outcome in outcomes),
+            "deals",
+            deal_count,
+        ),
+        _ReportStatistic(
+            "Declaring side had 26+ HCP but did not bid game",
+            sum(not outcome.game_bid for outcome in high_hcp_outcomes),
+            "contracts with a 26+ HCP declaring side",
+            len(high_hcp_outcomes),
+        ),
+        _ReportStatistic(
+            "Declaring side had 21 or fewer HCP and bid game",
+            sum(outcome.game_bid for outcome in low_hcp_outcomes),
+            "contracts with a 21-or-fewer-HCP declaring side",
+            len(low_hcp_outcomes),
+        ),
+        _ReportStatistic(
+            "Bid contract made double dummy",
+            sum(outcome.made_double_dummy for outcome in outcomes),
+            "bid contracts",
+            contract_count,
+        ),
+        _ReportStatistic(
+            "Passed out",
+            passed_out_count,
+            "deals",
+            deal_count,
+        ),
+    )
+
+
+def _is_game_or_higher(contract: Contract) -> bool:
+    return contract.level >= _GAME_LEVELS[contract.denomination]
+
+
 def _standard_rotation(board_number: int) -> tuple[Seat, Vulnerability]:
     if (
         not isinstance(board_number, int)
@@ -679,6 +896,7 @@ def _report_html(
     results: Sequence[BoardAuction],
     generated_at: datetime,
     *,
+    statistics: Sequence[_ReportStatistic],
     dealer_seeds: Sequence[int] | None = None,
 ) -> str:
     system_details = (
@@ -696,6 +914,16 @@ def _report_html(
     boards = "\n".join(
         _board_html(result, first=index == 0)
         for index, result in enumerate(results)
+    )
+    statistic_rows = "\n".join(
+        "<tr>"
+        f'<th scope="row">{html.escape(statistic.label)}</th>'
+        f'<td class="number">{statistic.occurrences}</td>'
+        f'<td>{statistic.reference_count} '
+        f"{html.escape(statistic.reference_label)}</td>"
+        f'<td class="rate">{statistic.percentage:.1f}%</td>'
+        "</tr>"
+        for statistic in statistics
     )
     condition_details = ""
     seed_label = "Dealer seed"
@@ -733,11 +961,18 @@ body {{ color: #17212b; font: 10pt/1.3 Arial, sans-serif; margin: 0; }}
 h1 {{ color: #123b5d; font-size: 20pt; margin: 0 0 2mm; }}
 h2 {{ color: #123b5d; font-size: 16pt; margin: 4mm 0 2mm; }}
 h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
-.report-header {{ border-bottom: 1px solid #8199aa; margin-bottom: 4mm; padding-bottom: 3mm; }}
+.report-header {{ border-bottom: 1px solid #8199aa; break-after: page; margin-bottom: 4mm; padding-bottom: 3mm; page-break-after: always; }}
 .subtitle {{ color: #536978; margin: 0 0 3mm; }}
 .metadata {{ display: grid; gap: 2mm 7mm; grid-template-columns: 1fr 1fr; }}
 .setting {{ margin: 0; }}
 .label {{ color: #536978; font-weight: bold; }}
+.statistics {{ margin-top: 3mm; }}
+.statistics h2 {{ margin-top: 0; }}
+.statistics-table {{ border-collapse: collapse; margin-top: 2mm; width: 100%; }}
+.statistics-table th, .statistics-table td {{ border: 1px solid #aebdc7; padding: 1mm 1.5mm; text-align: left; }}
+.statistics-table thead th {{ background: #edf3f6; }}
+.statistics-table tbody tr {{ break-inside: avoid; page-break-inside: avoid; }}
+.statistics-table .number, .statistics-table .rate {{ text-align: right; white-space: nowrap; }}
 .board {{ break-before: page; page-break-before: always; }}
 .board.first {{ break-before: auto; page-break-before: auto; }}
 .board-meta {{ color: #536978; display: flex; gap: 7mm; margin-bottom: 3mm; }}
@@ -778,6 +1013,16 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
     {system_details[0]}
     {system_details[1]}
   </div>
+  <section class="statistics">
+    <h2>Outcome statistics</h2>
+    <p class="small">Percentages use the reference set shown. Passed-out deals are included in deal-based rates; declaring-side HCP rates use contracts only. A zero denominator gives 0%.</p>
+    <table class="statistics-table">
+      <thead>
+        <tr><th>Statistic</th><th>Occurrences</th><th>Reference set</th><th>Percentage</th></tr>
+      </thead>
+      <tbody>{statistic_rows}</tbody>
+    </table>
+  </section>
 </header>
 {boards}
 </body>
