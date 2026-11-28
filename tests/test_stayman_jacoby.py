@@ -308,6 +308,108 @@ class StaymanJacobyTests(unittest.TestCase):
                 )
                 self.assertEqual(decision, expected)
 
+    def test_invitational_responses_simulate_only_known_game_options(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        cases = (
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                HandProfile(16, (4, 3, 3, 3)),
+                [PassCall.PASS, Bid(3, Denomination.NOTRUMP)],
+                Bid(3, Denomination.NOTRUMP),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                HandProfile(16, (4, 3, 3, 3)),
+                [PassCall.PASS, Bid(4, Denomination.HEARTS)],
+                Bid(4, Denomination.HEARTS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(3, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                ),
+                HandProfile(16, (4, 3, 2, 4)),
+                [
+                    PassCall.PASS,
+                    Bid(5, Denomination.DIAMONDS),
+                    Bid(3, Denomination.NOTRUMP),
+                ],
+                Bid(5, Denomination.DIAMONDS),
+            ),
+        )
+        for auction, hand, expected_candidates, selected_call in cases:
+            with self.subTest(auction=auction):
+                seen_candidates: list[Call] = []
+
+                def evaluate(candidates: Sequence[Call]) -> Call:
+                    seen_candidates.extend(candidates)
+                    return selected_call
+
+                decision = system.choose_call(
+                    _auction_context(
+                        hand,
+                        auction,
+                        Seat.NORTH,
+                        simulation_evaluator=evaluate,
+                    )
+                )
+                self.assertEqual(decision, selected_call)
+                self.assertEqual(seen_candidates, expected_candidates)
+
+    def test_special_five_four_invitation_keeps_its_custom_simulation(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        seen_candidates: list[Call] = []
+
+        def evaluate(candidates: Sequence[Call]) -> Call:
+            seen_candidates.extend(candidates)
+            return PassCall.PASS
+
+        decision = system.choose_call(
+            _auction_context(
+                HandProfile(16, (4, 3, 3, 3)),
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+                simulation_evaluator=evaluate,
+            )
+        )
+        self.assertEqual(decision, PassCall.PASS)
+        self.assertEqual(
+            seen_candidates,
+            [
+                PassCall.PASS,
+                Bid(2, Denomination.NOTRUMP),
+                Bid(3, Denomination.HEARTS),
+                Bid(3, Denomination.NOTRUMP),
+                Bid(4, Denomination.HEARTS),
+                Bid(4, Denomination.SPADES),
+            ],
+        )
+
     def test_three_card_major_support_is_shown_over_game_force_minor_bids(self) -> None:
         system = load_system(SYSTEM_PATH)
         cases = (
@@ -445,9 +547,8 @@ class StaymanJacobyTests(unittest.TestCase):
                     Bid(2, Denomination.NOTRUMP),
                     PassCall.PASS,
                 ),
-                Bid(3, Denomination.HEARTS),
-                [PassCall.PASS, Bid(3, Denomination.HEARTS),
-                 Bid(3, Denomination.NOTRUMP), Bid(4, Denomination.HEARTS)],
+                Bid(4, Denomination.HEARTS),
+                [PassCall.PASS, Bid(4, Denomination.HEARTS)],
             ),
             (
                 (
@@ -474,9 +575,8 @@ class StaymanJacobyTests(unittest.TestCase):
                     Bid(2, Denomination.NOTRUMP),
                     PassCall.PASS,
                 ),
-                Bid(3, Denomination.SPADES),
-                [PassCall.PASS, Bid(3, Denomination.SPADES),
-                 Bid(3, Denomination.NOTRUMP), Bid(4, Denomination.SPADES)],
+                Bid(4, Denomination.SPADES),
+                [PassCall.PASS, Bid(4, Denomination.SPADES)],
             ),
             (
                 (

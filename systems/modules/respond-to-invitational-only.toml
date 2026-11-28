@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "module"
+id = "respond-to-invitational-only"
+version = "1.0.0"
+name = "Respond to exactly invitational calls"
+
+[[rules]]
+id = "simulate-pass-or-game-after-invitation"
+respond_to_invitation = true
+
+[rules.when]
+invitation = true
+game_force = false

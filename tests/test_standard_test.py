@@ -193,6 +193,7 @@ class StandardTestReportTests(unittest.TestCase):
             tuple(module.module_id for module in north_south.modules),
             (
                 "standard-openings",
+                "respond-to-invitational-only",
                 "stayman-gf-fit-raises",
                 "stayman-transfer-nt-corrections",
                 "jump-to-game-in-GF",

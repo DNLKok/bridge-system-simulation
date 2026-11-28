@@ -1,7 +1,7 @@
 schema_version = 1
 kind = "module"
 id = "stayman-jacoby"
-version = "1.3.0"
+version = "1.4.0"
 name = "Stayman-Jacoby"
 
 partner_opening_calls = ["1NT"]
@@ -173,6 +173,46 @@ establishes_game_force = true
 after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
 call_above = "3D"
 establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "2NT"
+establishes_invitation = true
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "3D"
+establishes_invitation = true
+invitation_suit = "diamonds"
+invitation_min_suit_length = 6
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS"]
+call = "2NT"
+establishes_invitation = true
+invitation_suit = "spades"
+invitation_min_suit_length = 5
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS"]
+call = "3S"
+establishes_invitation = true
+invitation_suit = "spades"
+invitation_min_suit_length = 6
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS"]
+call = "2NT"
+establishes_invitation = true
+invitation_suit = "hearts"
+invitation_min_suit_length = 5
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS"]
+call = "3H"
+establishes_invitation = true
+invitation_suit = "hearts"
+invitation_min_suit_length = 6
 
 [strength_ranges]
 "Slam interest" = { min_hcp = 15 }

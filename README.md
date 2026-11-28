@@ -88,13 +88,23 @@ five-card-major hands use the corresponding Jacoby transfer. Continuations after
 Modules can also declare public auction signals with `public_signals`. These
 signals attach a confirmed fit or game force to an auction pattern, independent
 of either hand's private HCP range, and remain in effect for the rest of the
-auction. The Stayman-Jacoby module marks its specified responder bids and
-continuations this way. The reusable
+auction. Invitational signals are active only for the partner's next call. The
+Stayman-Jacoby module marks its specified responder bids and continuations this
+way. The reusable
 [jump-to-game-in-GF module](systems/modules/jump-to-game-in-GF.toml), included
 in the [Stayman-Jacoby system](systems/standard-stayman-jacoby.toml), responds
 to a public game force by bidding the cheapest game in a confirmed suit fit;
 without a confirmed suit fit it bids 3NT. If that game has already been bid by
 the partnership, it passes.
+
+The reusable
+[respond-to-invitational-only module](systems/modules/respond-to-invitational-only.toml)
+simulates pass and the game options when partner shows exactly invitational
+values. It considers only the game in a known major fit; for a known minor fit
+it also considers 3NT, and without a fit it considers pass or 3NT. A shown
+five-or-longer suit combines with the responder's actual holding to establish a
+fit when the partnership has at least eight cards. The special
+1NT–2♦; 2♥–2♠ invitation retains its convention-specific simulation.
 
 ## Standard bidding-system test
 
