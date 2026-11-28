@@ -1115,7 +1115,7 @@ def _same_partnership(left: Seat, right: Seat) -> bool:
 def _has_stopper(honors: str, suit_length: int) -> bool:
     return (
         "A" in honors
-        or "K" in honors
+        or ("K" in honors and suit_length >= 2)
         or ("Q" in honors and suit_length >= 3)
         or ("J" in honors and suit_length >= 4)
         or suit_length >= 5
