@@ -102,6 +102,39 @@ timestamped PDF under `reports/`, named
 settings, then shows each complete deal as a compass hand diagram beside its
 complete auction. PDF rendering requires Chromium on `PATH`.
 
+### Conditional auction tests
+
+To generate a report only for deals where the systems reach a specified
+auction prefix, copy [simulation/conditional-test.toml](simulation/conditional-test.toml)
+to a new TOML file in the `simulation/` folder. Edit `[systems]` to select the
+two system manifests and their filename abbreviations, and edit `[condition]`:
+
+```toml
+[condition]
+label = "SJ-2S"
+auction = ["N:1NT", "E:PASS", "S:2S"]
+```
+
+Each entry is `SEAT:CALL`; seats can be `N`, `E`, `S`, `W` (or their full
+names), and calls can be bids, `PASS`, `X`, or `XX`. Entries must be consecutive
+clockwise turns. If the standard board dealer is before the first listed seat,
+the runner requires those intervening seats to pass. It then generates deals
+whose system-produced auction matches the configured prefix, runs the
+remaining auction, and uses the same standard dealer/vulnerability rotation and
+PDF layout as the unrestricted test. The report records the requested prefix,
+systems, settings, and the per-board deal-generation seeds.
+
+Run the copied configuration with:
+
+```sh
+python -m bridge_sim.standard_test --config simulation/my-conditional-test.toml
+```
+
+The included example uses the composite systems in
+[systems/standard-stayman-jacoby.toml](systems/standard-stayman-jacoby.toml)
+and [systems/always-pass.toml](systems/always-pass.toml). Replace them with
+other system files as needed.
+
 Simulation-based bidding requires complete PBN deals; `run_auction` reports an
 error if such a rule is used with profile-only deals. Other out-of-book
 decisions still raise a clear error instead of silently inventing a call;

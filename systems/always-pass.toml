@@ -1,0 +1,7 @@
+schema_version = 1
+kind = "system"
+id = "always-pass"
+version = "1.0.0"
+name = "Always pass"
+on_no_match = "PASS"
+modules = []

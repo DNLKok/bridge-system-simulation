@@ -18,6 +18,9 @@ from bridge_sim.standard_test import (
     BoardAuction,
     _auction_headers,
     _auction_rows,
+    _conditional_dealer_conditions,
+    _conditional_dealer_script,
+    _conditional_prefix_for_dealer,
     _report_html,
     _output_filename,
     _standard_rotation,
@@ -28,6 +31,7 @@ from bridge_sim.systems import load_system
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "simulation" / "standard-test.toml"
+CONDITIONAL_CONFIG = ROOT / "simulation" / "conditional-test.toml"
 
 
 class StandardTestReportTests(unittest.TestCase):
@@ -170,6 +174,107 @@ class StandardTestReportTests(unittest.TestCase):
             "20261128_101242_NS-STD_EW-STD.pdf",
         )
 
+    def test_conditional_settings_load_systems_and_auction_prefix(self) -> None:
+        settings = load_settings(CONDITIONAL_CONFIG)
+        self.assertEqual(settings.condition_label, "SJ-2S")
+        self.assertEqual(
+            tuple(
+                (entry.seat, str(entry.call))
+                for entry in settings.auction_prefix
+            ),
+            (
+                (Seat.NORTH, "1NT"),
+                (Seat.EAST, "PASS"),
+                (Seat.SOUTH, "2S"),
+            ),
+        )
+        north_south = load_system(settings.north_south_system)
+        self.assertEqual(
+            tuple(module.module_id for module in north_south.modules),
+            ("standard-openings", "stayman-jacoby"),
+        )
+        self.assertEqual(load_system(settings.east_west_system).modules, ())
+        timestamp = datetime(2026, 11, 28, 10, 12, 42, tzinfo=timezone.utc)
+        self.assertEqual(
+            _output_filename(settings, timestamp),
+            "20261128_101242_NS-SJ_EW-PASS_COND-SJ-2S.pdf",
+        )
+
+    def test_conditional_prefix_adds_leading_passes_for_rotated_dealers(self) -> None:
+        settings = load_settings(CONDITIONAL_CONFIG)
+        prefix = _conditional_prefix_for_dealer(
+            settings.auction_prefix,
+            Seat.SOUTH,
+        )
+        self.assertEqual(
+            tuple((entry.seat, str(entry.call)) for entry in prefix),
+            (
+                (Seat.SOUTH, "PASS"),
+                (Seat.WEST, "PASS"),
+                (Seat.NORTH, "1NT"),
+                (Seat.EAST, "PASS"),
+                (Seat.SOUTH, "2S"),
+            ),
+        )
+
+    def test_conditional_settings_reject_nonconsecutive_seats(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "conditional-test.toml"
+            config.write_text(
+                CONDITIONAL_CONFIG.read_text(encoding="utf-8").replace(
+                    '"E:PASS"',
+                    '"W:PASS"',
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "follow the previous seat"):
+                load_settings(config)
+
+    def test_conditional_dealer_script_combines_conditions_and_rotation(self) -> None:
+        settings = load_settings(CONDITIONAL_CONFIG)
+        prefix = _conditional_prefix_for_dealer(
+            settings.auction_prefix,
+            Seat.SOUTH,
+        )
+        conditions = _conditional_dealer_conditions(
+            prefix,
+            Seat.SOUTH,
+            Vulnerability.NORTH_SOUTH,
+            load_system(settings.north_south_system),
+            load_system(settings.east_west_system),
+        )
+        script = _conditional_dealer_script(
+            Seat.SOUTH,
+            Vulnerability.NORTH_SOUTH,
+            conditions,
+        )
+        self.assertIn("dealer south", script)
+        self.assertIn("vulnerable ns", script)
+        self.assertEqual(
+            sum(line.startswith("condition ") for line in script.splitlines()),
+            1,
+        )
+        self.assertIn("conditionalcondition1 =", script)
+        self.assertIn(" && ", script)
+
+    def test_conditional_conditions_defer_simulation_selected_calls(self) -> None:
+        settings = load_settings(CONDITIONAL_CONFIG)
+        prefix = (
+            AuctionEntry(Seat.NORTH, Bid(1, Denomination.NOTRUMP)),
+            AuctionEntry(Seat.EAST, PassCall.PASS),
+            AuctionEntry(Seat.SOUTH, Bid(3, Denomination.SPADES)),
+            AuctionEntry(Seat.WEST, PassCall.PASS),
+            AuctionEntry(Seat.NORTH, Bid(3, Denomination.NOTRUMP)),
+        )
+        conditions = _conditional_dealer_conditions(
+            prefix,
+            Seat.NORTH,
+            Vulnerability.NONE,
+            load_system(settings.north_south_system),
+            load_system(settings.east_west_system),
+        )
+        self.assertTrue(conditions)
+
     def test_settings_reject_advanced_out_of_book_logic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "standard-test.toml"
@@ -235,6 +340,27 @@ class StandardTestReportTests(unittest.TestCase):
         self.assertIn("5432", html)
         self.assertIn("1NT", html)
         self.assertIn("Result: 1NT by S", html)
+
+        conditional_settings = load_settings(CONDITIONAL_CONFIG)
+        conditional_html = _report_html(
+            conditional_settings,
+            load_system(conditional_settings.north_south_system),
+            load_system(conditional_settings.east_west_system),
+            (result,),
+            datetime(2026, 11, 28, 10, 12, 42, tzinfo=timezone.utc),
+            dealer_seeds=(20261128,),
+        )
+        self.assertIn("Condition label:</span> SJ-2S", conditional_html)
+        self.assertIn(
+            "Required auction prefix:</span> N:1NT E:PASS S:2S",
+            conditional_html,
+        )
+        self.assertIn(
+            "Conditional test for auction prefix N:1NT E:PASS S:2S",
+            conditional_html,
+        )
+        self.assertIn("Simulation seed:", conditional_html)
+        self.assertIn("Dealer seeds (boards 1\u2013N):</span> 20261128", conditional_html)
 
 
 if __name__ == "__main__":

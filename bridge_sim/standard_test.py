@@ -15,8 +15,26 @@ from typing import Sequence
 
 from .auction import run_auction
 from .deals import DealerProvider, PBNBoard, Vulnerability
-from .model import AuctionResult, Seat
-from .systems import CompositeBiddingSystem, load_system
+from .model import (
+    AuctionEntry,
+    AuctionResult,
+    Bid,
+    Call,
+    Denomination,
+    DoubleCall,
+    HandProfile,
+    PassCall,
+    RedoubleCall,
+    Seat,
+)
+from .model_assistant import _auction_state
+from .systems import (
+    CompositeBiddingSystem,
+    DecisionContext,
+    OutOfBookDecision,
+    _matches_module_opening,
+    load_system,
+)
 
 _DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[1] / "simulation" / "standard-test.toml"
@@ -35,6 +53,7 @@ _SUIT_ROWS = (
 )
 _RANK_ORDER = "AKQJT98765432"
 _DEALER_CYCLE = (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST)
+_CONDITIONAL_MAX_ATTEMPTS = 256
 _VULNERABILITY_CYCLE = (
     Vulnerability.NONE,
     Vulnerability.NORTH_SOUTH,
@@ -67,6 +86,8 @@ class StandardTestSettings:
     east_west_system: Path
     east_west_abbreviation: str
     output_directory: Path
+    condition_label: str | None = None
+    auction_prefix: tuple[AuctionEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,13 +100,17 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
     config_path = Path(path).resolve()
     with config_path.open("rb") as config_file:
         config = tomllib.load(config_file)
-    if set(config) != {"schema_version", "simulation", "systems"}:
+    if set(config) not in (
+        {"schema_version", "simulation", "systems"},
+        {"schema_version", "simulation", "systems", "condition"},
+    ):
         raise ValueError("Standard-test settings have missing or unknown sections.")
     if config["schema_version"] != 1:
         raise ValueError("Standard-test settings must use schema_version 1.")
 
     simulation = config["simulation"]
     systems = config["systems"]
+    condition = config.get("condition")
     if not isinstance(simulation, dict) or set(simulation) != {
         "deal_count",
         "seed",
@@ -103,6 +128,39 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
         raise ValueError(
             "The systems section must define both system paths and abbreviations."
         )
+    condition_label: str | None = None
+    auction_prefix: tuple[AuctionEntry, ...] = ()
+    if condition is not None:
+        if not isinstance(condition, dict) or set(condition) != {
+            "label",
+            "auction",
+        }:
+            raise ValueError(
+                "The condition section must define exactly label and auction."
+            )
+        condition_label = _system_abbreviation(
+            condition["label"],
+            "condition.label",
+        )
+        raw_auction = condition["auction"]
+        if (
+            not isinstance(raw_auction, list)
+            or not raw_auction
+            or any(not isinstance(entry, str) for entry in raw_auction)
+        ):
+            raise ValueError("condition.auction must be a non-empty array of calls.")
+        auction_prefix = tuple(
+            _parse_auction_entry(entry, index)
+            for index, entry in enumerate(raw_auction, start=1)
+        )
+        if any(
+            current.seat is not previous.seat.next
+            for previous, current in zip(auction_prefix, auction_prefix[1:])
+        ):
+            raise ValueError(
+                "Each condition.auction seat must follow the previous seat "
+                "clockwise."
+            )
 
     deal_count = _integer_setting(simulation, "deal_count", minimum=1)
     decision_simulation_n = _integer_setting(
@@ -149,6 +207,8 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
             simulation["output_directory"],
             "output_directory",
         ),
+        condition_label=condition_label,
+        auction_prefix=auction_prefix,
     )
 
 
@@ -174,6 +234,23 @@ def _run_standard_test(
         else settings.output_directory
         / _output_filename(settings, generated_at)
     )
+
+    if settings.auction_prefix:
+        results, dealer_seeds = _run_conditional_auctions(
+            settings,
+            north_south,
+            east_west,
+        )
+        document = _report_html(
+            settings,
+            north_south,
+            east_west,
+            results,
+            generated_at,
+            dealer_seeds=dealer_seeds,
+        )
+        _render_pdf(document, output_path)
+        return output_path
 
     with tempfile.TemporaryDirectory(prefix="bridge-standard-test-") as directory:
         dealer_script = Path(directory) / "unrestricted.dealer"
@@ -220,6 +297,256 @@ def _run_standard_test(
     return output_path
 
 
+def _run_conditional_auctions(
+    settings: StandardTestSettings,
+    north_south: CompositeBiddingSystem,
+    east_west: CompositeBiddingSystem,
+) -> tuple[tuple[BoardAuction, ...], tuple[int, ...]]:
+    if not settings.auction_prefix:
+        raise ValueError("A conditional test requires a non-empty auction prefix.")
+
+    provider = DealerProvider()
+    results: list[BoardAuction] = []
+    dealer_seeds: list[int] = []
+    seen_deals: set[tuple[tuple[str, ...], ...]] = set()
+    for board_number in range(1, settings.deal_count + 1):
+        dealer, vulnerability = _standard_rotation(board_number)
+        expected_prefix = _conditional_prefix_for_dealer(
+            settings.auction_prefix,
+            dealer,
+        )
+        conditions = _conditional_dealer_conditions(
+            expected_prefix,
+            dealer,
+            vulnerability,
+            north_south,
+            east_west,
+        )
+        accepted = False
+        for attempt in range(_CONDITIONAL_MAX_ATTEMPTS):
+            generation_seed = (
+                settings.seed
+                + (board_number - 1) * _CONDITIONAL_MAX_ATTEMPTS
+                + attempt
+            )
+            script = _conditional_dealer_script(
+                dealer,
+                vulnerability,
+                conditions,
+            )
+            with tempfile.TemporaryDirectory(
+                prefix="bridge-conditional-test-"
+            ) as directory:
+                dealer_script = Path(directory) / "condition.dealer"
+                dealer_script.write_text(script, encoding="utf-8")
+                generated = tuple(
+                    provider.generate(dealer_script, seed=generation_seed)
+                )
+            if not generated:
+                raise RuntimeError(
+                    f"Dealer produced no deals for board {board_number}."
+                )
+            if len(generated) != 1:
+                raise RuntimeError(
+                    f"Dealer produced {len(generated)} deals; expected one."
+                )
+            candidate = generated[0]
+            if candidate.seed != generation_seed:
+                raise RuntimeError(
+                    "Dealer output did not retain the requested conditional-test seed."
+                )
+
+            tags = dict(candidate.tags)
+            tags["Board"] = str(board_number)
+            candidate = _apply_standard_rotation(
+                replace(
+                    candidate,
+                    board_number=board_number,
+                    tags=tags,
+                )
+            )
+            fingerprint = tuple(
+                candidate.hands[seat].suits
+                for seat in (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST)
+            )
+            if fingerprint in seen_deals:
+                continue
+
+            prefix_matches = _matches_prefix_without_simulation(
+                candidate,
+                expected_prefix,
+                north_south,
+                east_west,
+            )
+            if prefix_matches is False:
+                continue
+            auction = run_auction(
+                candidate,
+                north_south,
+                east_west,
+                dealer=dealer,
+                vulnerability=vulnerability,
+                simulation_n=settings.decision_simulation_n,
+                simulation_seed=settings.seed,
+            )
+            if tuple(auction.entries[: len(expected_prefix)]) != expected_prefix:
+                continue
+
+            seen_deals.add(fingerprint)
+            results.append(BoardAuction(candidate, auction))
+            dealer_seeds.append(generation_seed)
+            accepted = True
+            break
+        if not accepted:
+            raise RuntimeError(
+                f"Could not generate board {board_number} matching the "
+                f"configured auction prefix after "
+                f"{_CONDITIONAL_MAX_ATTEMPTS} attempts."
+            )
+
+    return tuple(results), tuple(dealer_seeds)
+
+
+def _conditional_prefix_for_dealer(
+    configured_prefix: Sequence[AuctionEntry],
+    dealer: Seat,
+) -> tuple[AuctionEntry, ...]:
+    prefix: list[AuctionEntry] = []
+    seat = dealer
+    while seat is not configured_prefix[0].seat:
+        prefix.append(AuctionEntry(seat, PassCall.PASS))
+        seat = seat.next
+    prefix.extend(configured_prefix)
+
+    auction: list[AuctionEntry] = []
+    for entry in prefix:
+        legal_calls, _ = _auction_state(auction, dealer, entry.seat)
+        if entry.call not in legal_calls:
+            raise ValueError(
+                f"Configured call {entry.call!s} is illegal for "
+                f"{entry.seat.value} after the generated passes."
+            )
+        auction.append(entry)
+    return tuple(prefix)
+
+
+def _conditional_dealer_conditions(
+    prefix: Sequence[AuctionEntry],
+    dealer: Seat,
+    vulnerability: Vulnerability,
+    north_south: CompositeBiddingSystem,
+    east_west: CompositeBiddingSystem,
+) -> tuple[str, ...]:
+    conditions: list[str] = []
+    auction: list[AuctionEntry] = []
+    hand = HandProfile(0, (4, 3, 3, 3))
+    for entry in prefix:
+        legal_calls, _ = _auction_state(auction, dealer, entry.seat)
+        system = (
+            north_south
+            if entry.seat in (Seat.NORTH, Seat.SOUTH)
+            else east_west
+        )
+        context = DecisionContext(
+            hand=hand,
+            auction=tuple(auction),
+            legal_calls=legal_calls,
+            seat=entry.seat,
+            dealer=dealer,
+            vulnerability=vulnerability,
+        )
+        try:
+            decision = system.dealer_call_condition(context, entry.call)
+        except ValueError:
+            if not _has_simulation_candidate(system, context, entry.call):
+                raise
+            decision = None
+        if decision is not None:
+            conditions.extend(decision.expressions)
+        auction.append(entry)
+    return tuple(conditions)
+
+
+def _has_simulation_candidate(
+    system: CompositeBiddingSystem,
+    context: DecisionContext,
+    call: Call,
+) -> bool:
+    return any(
+        _matches_module_opening(context, module)
+        and rule.evaluate_calls
+        and call in rule.preferred_calls
+        and rule.condition.matches_public_context(context)
+        for module in system.modules
+        for rule in module.rules
+    )
+
+
+def _conditional_dealer_script(
+    dealer: Seat,
+    vulnerability: Vulnerability,
+    conditions: Sequence[str],
+) -> str:
+    vulnerability_name = {
+        Vulnerability.NONE: "none",
+        Vulnerability.NORTH_SOUTH: "ns",
+        Vulnerability.EAST_WEST: "ew",
+        Vulnerability.ALL: "all",
+    }[vulnerability]
+    lines = [
+        "generate 10000000000",
+        "produce 1",
+        f"dealer {dealer.name.lower()}",
+        f"vulnerable {vulnerability_name}",
+    ]
+    if conditions:
+        condition_names = []
+        for index, condition in enumerate(conditions, start=1):
+            name = f"conditionalcondition{index}"
+            lines.append(f"{name} = ({condition})")
+            condition_names.append(name)
+        lines.append("condition " + " && ".join(condition_names))
+    lines.extend(("action printpbn", ""))
+    return "\n".join(lines)
+
+
+def _matches_prefix_without_simulation(
+    board: PBNBoard,
+    prefix: Sequence[AuctionEntry],
+    north_south: CompositeBiddingSystem,
+    east_west: CompositeBiddingSystem,
+) -> bool | None:
+    auction: list[AuctionEntry] = []
+    for entry in prefix:
+        legal_calls, _ = _auction_state(auction, board.dealer, entry.seat)
+        system = (
+            north_south
+            if entry.seat in (Seat.NORTH, Seat.SOUTH)
+            else east_west
+        )
+        try:
+            call = system.choose_call(
+                DecisionContext(
+                    hand=board.hand_for(entry.seat),
+                    auction=tuple(auction),
+                    legal_calls=legal_calls,
+                    seat=entry.seat,
+                    dealer=board.dealer,
+                    vulnerability=board.vulnerability,
+                )
+            )
+        except RuntimeError as error:
+            if "requires a simulation evaluator" in str(error):
+                return None
+            raise
+        if call is OutOfBookDecision.OUT_OF_BOOK:
+            return False
+        if call != entry.call:
+            return False
+        auction.append(AuctionEntry(entry.seat, call))
+    return True
+
+
 def _integer_setting(
     settings: dict[str, object],
     key: str,
@@ -247,15 +574,61 @@ def _system_abbreviation(value: object, key: str) -> str:
     return value.upper()
 
 
+def _parse_auction_entry(value: str, index: int) -> AuctionEntry:
+    seat_token, separator, call_token = value.partition(":")
+    if not separator or not seat_token.strip() or not call_token.strip():
+        raise ValueError(
+            f"condition.auction entry {index} must use SEAT:CALL format."
+        )
+    seat_names = {
+        "N": Seat.NORTH,
+        "NORTH": Seat.NORTH,
+        "E": Seat.EAST,
+        "EAST": Seat.EAST,
+        "S": Seat.SOUTH,
+        "SOUTH": Seat.SOUTH,
+        "W": Seat.WEST,
+        "WEST": Seat.WEST,
+    }
+    seat = seat_names.get(seat_token.strip().upper())
+    if seat is None:
+        raise ValueError(f"Invalid seat in condition.auction entry {index}.")
+
+    normalized_call = call_token.strip().upper()
+    if normalized_call in ("P", "PASS"):
+        call = PassCall.PASS
+    elif normalized_call in ("X", "DOUBLE"):
+        call = DoubleCall.DOUBLE
+    elif normalized_call in ("XX", "REDOUBLE"):
+        call = RedoubleCall.REDOUBLE
+    else:
+        if len(normalized_call) < 2 or normalized_call[0] not in "1234567":
+            raise ValueError(f"Invalid call in condition.auction entry {index}.")
+        try:
+            call = Bid(
+                int(normalized_call[0]),
+                Denomination(normalized_call[1:]),
+            )
+        except ValueError as error:
+            raise ValueError(
+                f"Invalid call in condition.auction entry {index}."
+            ) from error
+    return AuctionEntry(seat, call)
+
+
 def _output_filename(
     settings: StandardTestSettings,
     generated_at: datetime,
 ) -> str:
     timestamp = generated_at.strftime("%Y%m%d_%H%M%S")
-    return (
+    filename = (
         f"{timestamp}_NS-{settings.north_south_abbreviation}_"
         f"EW-{settings.east_west_abbreviation}.pdf"
     )
+    if settings.condition_label is not None:
+        filename = filename.removesuffix(".pdf")
+        filename += f"_COND-{settings.condition_label}.pdf"
+    return filename
 
 
 def _standard_rotation(board_number: int) -> tuple[Seat, Vulnerability]:
@@ -305,6 +678,8 @@ def _report_html(
     east_west: CompositeBiddingSystem,
     results: Sequence[BoardAuction],
     generated_at: datetime,
+    *,
+    dealer_seeds: Sequence[int] | None = None,
 ) -> str:
     system_details = (
         _system_html(
@@ -322,6 +697,29 @@ def _report_html(
         _board_html(result, first=index == 0)
         for index, result in enumerate(results)
     )
+    condition_details = ""
+    seed_label = "Dealer seed"
+    if settings.auction_prefix:
+        seed_label = "Simulation seed"
+        prefix_text = " ".join(
+            f"{entry.seat.value}:{entry.call}" for entry in settings.auction_prefix
+        )
+        subtitle = f"Conditional test for auction prefix {prefix_text}"
+        condition_details = (
+            '<p class="setting"><span class="label">Condition label:</span> '
+            f"{html.escape(settings.condition_label or '')}</p>\n"
+            '<p class="setting"><span class="label">Required auction prefix:</span> '
+            f"{html.escape(prefix_text)}</p>\n"
+        )
+        if dealer_seeds is not None:
+            seed_text = ", ".join(str(seed) for seed in dealer_seeds)
+            condition_details += (
+                '<p class="setting"><span class="label">Dealer seeds '
+                "(boards 1\u2013N):</span> "
+                f"{html.escape(seed_text)}</p>\n"
+            )
+    else:
+        subtitle = "Randomly generated deals and deterministic system auctions"
     return f"""\
 <!doctype html>
 <html lang="en">
@@ -362,10 +760,10 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
 <body>
 <header class="report-header">
   <h1>Bridge Standard Test</h1>
-  <p class="subtitle">Randomly generated deals and deterministic system auctions</p>
+  <p class="subtitle">{html.escape(subtitle)}</p>
   <div class="metadata">
     <p class="setting"><span class="label">Deals:</span> {settings.deal_count}</p>
-    <p class="setting"><span class="label">Dealer seed:</span> {settings.seed}</p>
+    <p class="setting"><span class="label">{seed_label}:</span> {settings.seed}</p>
     <p class="setting"><span class="label">Decision simulation N:</span>
       {settings.decision_simulation_n}
     </p>
@@ -376,6 +774,7 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
     <p class="setting"><span class="label">Generated:</span>
       {html.escape(generated_at.strftime("%Y-%m-%d %H:%M:%S %Z"))}
     </p>
+    {condition_details}
     {system_details[0]}
     {system_details[1]}
   </div>
