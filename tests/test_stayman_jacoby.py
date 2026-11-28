@@ -308,6 +308,226 @@ class StaymanJacobyTests(unittest.TestCase):
                 )
                 self.assertEqual(decision, expected)
 
+    def test_three_card_major_support_is_shown_over_game_force_minor_bids(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        cases = (
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(3, Denomination.CLUBS),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (4, 3, 3, 3)),
+                Bid(3, Denomination.HEARTS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(3, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (4, 3, 3, 3)),
+                Bid(3, Denomination.HEARTS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(3, Denomination.CLUBS),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (4, 3, 3, 3)),
+                Bid(3, Denomination.SPADES),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(3, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (4, 3, 3, 3)),
+                Bid(3, Denomination.SPADES),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(3, Denomination.CLUBS),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (2, 2, 4, 5)),
+                Bid(3, Denomination.NOTRUMP),
+            ),
+        )
+        for auction, hand, expected in cases:
+            with self.subTest(auction=auction, hand=hand):
+                decision = system.choose_call(
+                    _auction_context(hand, auction, Seat.NORTH)
+                )
+                self.assertEqual(decision, expected)
+
+        after_fit_raise = _auction_context(
+            HandProfile(9, (4, 3, 3, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.DIAMONDS),
+                PassCall.PASS,
+                Bid(2, Denomination.HEARTS),
+                PassCall.PASS,
+                Bid(3, Denomination.CLUBS),
+                PassCall.PASS,
+                Bid(3, Denomination.HEARTS),
+                PassCall.PASS,
+            ),
+            Seat.SOUTH,
+        )
+        self.assertEqual(
+            system.choose_call(after_fit_raise),
+            Bid(4, Denomination.HEARTS),
+        )
+
+        after_spade_fit_raise = _auction_context(
+            HandProfile(9, (4, 3, 3, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.HEARTS),
+                PassCall.PASS,
+                Bid(2, Denomination.SPADES),
+                PassCall.PASS,
+                Bid(3, Denomination.DIAMONDS),
+                PassCall.PASS,
+                Bid(3, Denomination.SPADES),
+                PassCall.PASS,
+            ),
+            Seat.SOUTH,
+        )
+        self.assertEqual(
+            system.choose_call(after_spade_fit_raise),
+            Bid(4, Denomination.SPADES),
+        )
+
+    def test_nt_signoffs_after_jacoby_transfers_are_simulated_with_fit(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        cases = (
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                Bid(3, Denomination.HEARTS),
+                [PassCall.PASS, Bid(3, Denomination.HEARTS),
+                 Bid(3, Denomination.NOTRUMP), Bid(4, Denomination.HEARTS)],
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(3, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                Bid(4, Denomination.HEARTS),
+                [PassCall.PASS, Bid(4, Denomination.HEARTS)],
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                Bid(3, Denomination.SPADES),
+                [PassCall.PASS, Bid(3, Denomination.SPADES),
+                 Bid(3, Denomination.NOTRUMP), Bid(4, Denomination.SPADES)],
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(3, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                Bid(4, Denomination.SPADES),
+                [PassCall.PASS, Bid(4, Denomination.SPADES)],
+            ),
+        )
+        for auction, selected_call, expected_candidates in cases:
+            with self.subTest(auction=auction):
+                seen_candidates: list[Call] = []
+
+                def evaluate(candidates: Sequence[Call]) -> Call:
+                    seen_candidates.extend(candidates)
+                    return selected_call
+
+                decision = system.choose_call(
+                    _auction_context(
+                        HandProfile(16, (4, 3, 3, 3)),
+                        auction,
+                        Seat.NORTH,
+                        simulation_evaluator=evaluate,
+                    )
+                )
+                self.assertEqual(decision, selected_call)
+                self.assertEqual(seen_candidates, expected_candidates)
+
+        gf_context_base = _auction_context(
+            HandProfile(16, (4, 3, 3, 3)),
+            cases[0][0],
+            Seat.NORTH,
+        )
+        gf_context = DecisionContext(
+            hand=gf_context_base.hand,
+            auction=gf_context_base.auction,
+            legal_calls=LEGAL_CALLS,
+            seat=Seat.NORTH,
+            dealer=Seat.NORTH,
+            vulnerability=Vulnerability.NONE,
+            game_force=True,
+        )
+        self.assertEqual(system.choose_call(gf_context), Bid(4, Denomination.HEARTS))
+
     def test_game_force_persists_and_private_strength_is_not_a_signal(self) -> None:
         system = load_system(SYSTEM_PATH)
         already_at_game = _context(

@@ -74,6 +74,11 @@ with slam interest when without shortage. The opener's choices after 3♦, 3♥,
 and 3♠ are evaluated with sampled deals and double-dummy scores against par.
 After 2♥ and 2♦, the opener's major-suit fit responses and the responder's
 continuations are specified, with game choices evaluated by simulation.
+On the GF minor rebids after these transfers, opener shows a three-card major
+fit by bidding 3♥ or 3♠; the GF module then continues to game in that fit.
+After a Jacoby transfer and an NT signoff, opener also considers correcting to
+the major with three-card support. The 2NT sequences simulate pass, 3M, 3NT, and
+4M (or force 4M in a GF auction); the 3NT sequences simulate pass versus 4M.
 Responder uses 2♣ with invitational/GF/Slam-interest hands having exactly four
 cards in one or both majors (the other major no longer), or with GF/Slam-interest
 5-4 major hands either way; the weak 5+/4+ major treatment is unchanged. Other

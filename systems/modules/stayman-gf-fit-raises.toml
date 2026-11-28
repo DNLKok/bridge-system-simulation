@@ -1,0 +1,64 @@
+schema_version = 1
+kind = "module"
+id = "stayman-gf-fit-raises"
+version = "1.0.0"
+name = "Stayman-Jacoby game-force fit raises"
+
+partner_opening_calls = ["1NT"]
+uncontested_partner_opening = true
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "3C", "PASS"]
+call = "3H"
+establishes_fit = "hearts"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "3D", "PASS"]
+call = "3H"
+establishes_fit = "hearts"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "3C", "PASS"]
+call = "3S"
+establishes_fit = "spades"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "3D", "PASS"]
+call = "3S"
+establishes_fit = "spades"
+
+[[rules]]
+id = "raise-to-three-hearts-over-three-clubs-after-heart-transfer"
+call = "3H"
+
+[rules.when]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "3C", "PASS"]
+game_force = true
+suit_lengths = { hearts = { min = 3 } }
+
+[[rules]]
+id = "raise-to-three-hearts-over-three-diamonds-after-heart-transfer"
+call = "3H"
+
+[rules.when]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "3D", "PASS"]
+game_force = true
+suit_lengths = { hearts = { min = 3 } }
+
+[[rules]]
+id = "raise-to-three-spades-over-three-clubs-after-spade-transfer"
+call = "3S"
+
+[rules.when]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "3C", "PASS"]
+game_force = true
+suit_lengths = { spades = { min = 3 } }
+
+[[rules]]
+id = "raise-to-three-spades-over-three-diamonds-after-spade-transfer"
+call = "3S"
+
+[rules.when]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "3D", "PASS"]
+game_force = true
+suit_lengths = { spades = { min = 3 } }
