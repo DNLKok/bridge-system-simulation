@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import html
+import re
 import shutil
 import subprocess
 import tempfile
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -31,6 +33,25 @@ _SUIT_ROWS = (
     ("C", "&clubs;", "black"),
 )
 _RANK_ORDER = "AKQJT98765432"
+_DEALER_CYCLE = (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST)
+_VULNERABILITY_CYCLE = (
+    Vulnerability.NONE,
+    Vulnerability.NORTH_SOUTH,
+    Vulnerability.EAST_WEST,
+    Vulnerability.ALL,
+    Vulnerability.NORTH_SOUTH,
+    Vulnerability.EAST_WEST,
+    Vulnerability.ALL,
+    Vulnerability.NONE,
+    Vulnerability.EAST_WEST,
+    Vulnerability.ALL,
+    Vulnerability.NONE,
+    Vulnerability.NORTH_SOUTH,
+    Vulnerability.ALL,
+    Vulnerability.NONE,
+    Vulnerability.NORTH_SOUTH,
+    Vulnerability.EAST_WEST,
+)
 
 
 @dataclass(frozen=True)
@@ -39,11 +60,11 @@ class StandardTestSettings:
     deal_count: int
     seed: int
     advanced_out_of_book: bool
-    dealer: Seat
-    vulnerability: Vulnerability
     north_south_system: Path
+    north_south_abbreviation: str
     east_west_system: Path
-    output: Path
+    east_west_abbreviation: str
+    output_directory: Path
 
 
 @dataclass(frozen=True)
@@ -67,16 +88,18 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
         "deal_count",
         "seed",
         "advanced_out_of_book",
-        "dealer",
-        "vulnerability",
-        "output",
+        "output_directory",
     }:
         raise ValueError("The simulation settings have missing or unknown keys.")
     if not isinstance(systems, dict) or set(systems) != {
         "north_south",
+        "north_south_abbreviation",
         "east_west",
+        "east_west_abbreviation",
     }:
-        raise ValueError("The systems section must define north_south and east_west.")
+        raise ValueError(
+            "The systems section must define both system paths and abbreviations."
+        )
 
     deal_count = _integer_setting(simulation, "deal_count", minimum=1)
     seed = _integer_setting(simulation, "seed", minimum=0)
@@ -89,26 +112,6 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
             "advanced out-of-book logic must be disabled."
         )
 
-    dealer_name = simulation["dealer"]
-    dealers = {
-        seat.name.lower(): seat
-        for seat in Seat
-    }
-    if not isinstance(dealer_name, str) or dealer_name.lower() not in dealers:
-        raise ValueError("dealer must be north, east, south, or west.")
-    vulnerability_name = simulation["vulnerability"]
-    vulnerabilities = {
-        "none": Vulnerability.NONE,
-        "ns": Vulnerability.NORTH_SOUTH,
-        "ew": Vulnerability.EAST_WEST,
-        "all": Vulnerability.ALL,
-    }
-    if (
-        not isinstance(vulnerability_name, str)
-        or vulnerability_name.lower() not in vulnerabilities
-    ):
-        raise ValueError("vulnerability must be none, ns, ew, or all.")
-
     def relative_path(value: object, key: str) -> Path:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{key} must be a non-empty path.")
@@ -120,11 +123,20 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
         deal_count=deal_count,
         seed=seed,
         advanced_out_of_book=advanced,
-        dealer=dealers[dealer_name.lower()],
-        vulnerability=vulnerabilities[vulnerability_name.lower()],
         north_south_system=relative_path(systems["north_south"], "north_south"),
+        north_south_abbreviation=_system_abbreviation(
+            systems["north_south_abbreviation"],
+            "north_south_abbreviation",
+        ),
         east_west_system=relative_path(systems["east_west"], "east_west"),
-        output=relative_path(simulation["output"], "output"),
+        east_west_abbreviation=_system_abbreviation(
+            systems["east_west_abbreviation"],
+            "east_west_abbreviation",
+        ),
+        output_directory=relative_path(
+            simulation["output_directory"],
+            "output_directory",
+        ),
     )
 
 
@@ -134,9 +146,15 @@ def run_standard_test(
     output: str | Path | None = None,
 ) -> Path:
     settings = load_settings(config_path)
+    generated_at = datetime.now().astimezone()
     north_south = load_system(settings.north_south_system)
     east_west = load_system(settings.east_west_system)
-    output_path = Path(output).resolve() if output is not None else settings.output
+    output_path = (
+        Path(output).resolve()
+        if output is not None
+        else settings.output_directory
+        / _output_filename(settings, generated_at)
+    )
 
     with tempfile.TemporaryDirectory(prefix="bridge-standard-test-") as directory:
         dealer_script = Path(directory) / "unrestricted.dealer"
@@ -144,17 +162,18 @@ def run_standard_test(
             _dealer_script(settings),
             encoding="utf-8",
         )
-        boards = tuple(
+        generated_boards = tuple(
             DealerProvider().generate(dealer_script, seed=settings.seed)
         )
 
-    if len(boards) != settings.deal_count:
+    if len(generated_boards) != settings.deal_count:
         raise RuntimeError(
-            f"Dealer produced {len(boards)} boards; "
+            f"Dealer produced {len(generated_boards)} boards; "
             f"expected {settings.deal_count}."
         )
-    if any(board.seed != settings.seed for board in boards):
+    if any(board.seed != settings.seed for board in generated_boards):
         raise RuntimeError("Dealer output did not retain the requested seed.")
+    boards = tuple(_apply_standard_rotation(board) for board in generated_boards)
 
     results = tuple(
         BoardAuction(
@@ -169,7 +188,13 @@ def run_standard_test(
         )
         for board in boards
     )
-    document = _report_html(settings, north_south, east_west, results)
+    document = _report_html(
+        settings,
+        north_south,
+        east_west,
+        results,
+        generated_at,
+    )
     _render_pdf(document, output_path)
     return output_path
 
@@ -190,13 +215,63 @@ def _integer_setting(
     return value
 
 
+def _system_abbreviation(value: object, key: str) -> str:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,15}", value) is None
+    ):
+        raise ValueError(
+            f"{key} must be 1-16 letters, numbers, underscores, or hyphens."
+        )
+    return value.upper()
+
+
+def _output_filename(
+    settings: StandardTestSettings,
+    generated_at: datetime,
+) -> str:
+    timestamp = generated_at.strftime("%Y%m%d_%H%M%S")
+    return (
+        f"{timestamp}_NS-{settings.north_south_abbreviation}_"
+        f"EW-{settings.east_west_abbreviation}.pdf"
+    )
+
+
+def _standard_rotation(board_number: int) -> tuple[Seat, Vulnerability]:
+    if (
+        not isinstance(board_number, int)
+        or isinstance(board_number, bool)
+        or board_number < 1
+    ):
+        raise ValueError("Board numbers must be positive integers.")
+    index = (board_number - 1) % len(_VULNERABILITY_CYCLE)
+    return (
+        _DEALER_CYCLE[(board_number - 1) % len(_DEALER_CYCLE)],
+        _VULNERABILITY_CYCLE[index],
+    )
+
+
+def _apply_standard_rotation(board: PBNBoard) -> PBNBoard:
+    dealer, vulnerability = _standard_rotation(board.board_number)
+    tags = dict(board.tags)
+    tags["Dealer"] = dealer.value
+    tags["Vulnerable"] = vulnerability.value
+    return replace(
+        board,
+        dealer=dealer,
+        vulnerability=vulnerability,
+        tags=tags,
+    )
+
+
 def _dealer_script(settings: StandardTestSettings) -> str:
+    # Dealer generates the cards; standard board metadata is applied afterward.
     return "\n".join(
         (
             f"generate {settings.deal_count}",
             f"produce {settings.deal_count}",
-            f"dealer {settings.dealer.name.lower()}",
-            f"vulnerable {settings.vulnerability.value.lower()}",
+            "dealer north",
+            "vulnerable none",
             "action printpbn",
             "",
         )
@@ -208,10 +283,19 @@ def _report_html(
     north_south: CompositeBiddingSystem,
     east_west: CompositeBiddingSystem,
     results: Sequence[BoardAuction],
+    generated_at: datetime,
 ) -> str:
     system_details = (
-        _system_html("North-South", north_south),
-        _system_html("East-West", east_west),
+        _system_html(
+            "North-South",
+            settings.north_south_abbreviation,
+            north_south,
+        ),
+        _system_html(
+            "East-West",
+            settings.east_west_abbreviation,
+            east_west,
+        ),
     )
     boards = "\n".join(
         _board_html(result, first=index == 0)
@@ -262,7 +346,10 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
     <p class="setting"><span class="label">Dealer seed:</span> {settings.seed}</p>
     <p class="setting"><span class="label">Advanced out-of-book logic:</span> Disabled</p>
     <p class="setting"><span class="label">Dealer / vulnerability:</span>
-      {html.escape(settings.dealer.name.title())} / {html.escape(settings.vulnerability.value)}
+      Standard 16-board rotation
+    </p>
+    <p class="setting"><span class="label">Generated:</span>
+      {html.escape(generated_at.strftime("%Y-%m-%d %H:%M:%S %Z"))}
     </p>
     {system_details[0]}
     {system_details[1]}
@@ -274,12 +361,17 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
 """
 
 
-def _system_html(label: str, system: CompositeBiddingSystem) -> str:
+def _system_html(
+    label: str,
+    abbreviation: str,
+    system: CompositeBiddingSystem,
+) -> str:
     modules = " &rarr; ".join(
         html.escape(module.name) for module in system.modules
     )
     return (
-        f'<p class="setting"><span class="label">{html.escape(label)}:</span> '
+        f'<p class="setting"><span class="label">{html.escape(label)} '
+        f"({html.escape(abbreviation)}):</span> "
         f"{html.escape(system.name)}<br><span class=\"small\">{modules}</span></p>"
     )
 

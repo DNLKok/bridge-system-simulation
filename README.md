@@ -72,18 +72,22 @@ handles balanced notrump and strong openings before choosing a longest-suit
 openings, traditional preempts, and simple overcalls (including its takeout
 doubles), in that priority order. The same composite system is assigned to
 North-South and East-West in [simulation/standard-test.toml](simulation/standard-test.toml).
-Edit that settings file to change the deal count, seed, dealer, vulnerability,
-systems, or PDF output. Advanced out-of-book logic is disabled and the runner
-rejects settings that enable it. Run the test with:
+Edit that settings file to change the deal count, seed, systems, abbreviations,
+or output directory. Dealer and vulnerability follow the standard 16-board
+cycle, then repeat: dealer rotates North-East-South-West, and vulnerability
+cycles None, NS, EW, All, NS, EW, All, None, EW, All, None, NS, All, None, NS,
+EW. Advanced out-of-book logic is disabled and the runner rejects settings
+that enable it. Run the test with:
 
 ```sh
 python -m bridge_sim.standard_test
 ```
 
-The default run generates 16 deals with seed `20261128` and writes
-[reports/standard-test.pdf](reports/standard-test.pdf). The PDF starts with
-the systems and settings, then shows each complete deal as a compass hand
-diagram beside its complete auction. PDF rendering requires Chromium on `PATH`.
+The default run generates 16 deals with seed `20261128` and writes a timestamped
+PDF under `reports/`, named
+`YYYYMMDD_HHMMSS_NS-<abbr>_EW-<abbr>.pdf`. The PDF starts with the systems and
+settings, then shows each complete deal as a compass hand diagram beside its
+complete auction. PDF rendering requires Chromium on `PATH`.
 
 If `run_auction` encounters an out-of-book decision, it raises a clear error
 instead of silently inventing a call; provide that auction context to the
