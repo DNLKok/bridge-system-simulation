@@ -74,7 +74,19 @@ class CardHand:
 
     @property
     def profile(self) -> HandProfile:
-        return HandProfile(self.hcp, self.shape)
+        suit_hcp = (
+            sum(_HCP.get(rank, 0) for rank in self.suits[0]),
+            sum(_HCP.get(rank, 0) for rank in self.suits[1]),
+            sum(_HCP.get(rank, 0) for rank in self.suits[2]),
+            sum(_HCP.get(rank, 0) for rank in self.suits[3]),
+        )
+        suit_honors = (
+            "".join(rank for rank in "AKQJ" if rank in self.suits[0]),
+            "".join(rank for rank in "AKQJ" if rank in self.suits[1]),
+            "".join(rank for rank in "AKQJ" if rank in self.suits[2]),
+            "".join(rank for rank in "AKQJ" if rank in self.suits[3]),
+        )
+        return HandProfile(self.hcp, self.shape, suit_hcp, suit_honors)
 
 
 @dataclass(frozen=True)

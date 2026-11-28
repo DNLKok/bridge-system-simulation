@@ -8,15 +8,17 @@ from bridge_sim import (
     Bid,
     Call,
     Contract,
+    CompositeBiddingSystem,
     Deal,
     Denomination,
+    DecisionContext,
     DoubleCall,
     HandProfile,
-    OneNoTrumpSystem,
     OutOfBookDecision,
     PassCall,
     RedoubleCall,
     Seat,
+    Vulnerability,
     load_system,
     run_auction,
 )
@@ -53,27 +55,47 @@ class CallSequenceSystem:
 
     def choose_call(
         self,
-        hand: HandProfile,
-        auction: Sequence[AuctionEntry],
-        legal_calls: frozenset[Call],
+        context: DecisionContext,
     ) -> Call:
-        del hand, legal_calls
-        call_index = sum(entry.seat in self.seats for entry in auction)
+        call_index = sum(entry.seat in self.seats for entry in context.auction)
         return self.calls[call_index]
+
+
+def decision_context(
+    hand: HandProfile,
+    auction: Sequence[AuctionEntry],
+    legal_calls: frozenset[Call],
+    *,
+    seat: Seat = Seat.NORTH,
+    dealer: Seat = Seat.NORTH,
+) -> DecisionContext:
+    return DecisionContext(
+        hand=hand,
+        auction=tuple(auction),
+        legal_calls=legal_calls,
+        seat=seat,
+        dealer=dealer,
+        vulnerability=Vulnerability.NONE,
+    )
 
 
 class AuctionTests(unittest.TestCase):
     def setUp(self) -> None:
         system = load_system(SYSTEM_PATH)
-        if not isinstance(system, OneNoTrumpSystem):
-            raise AssertionError("Expected the configured 1NT system.")
+        if not isinstance(system, CompositeBiddingSystem):
+            raise AssertionError("Expected the configured modular 1NT system.")
         self.system = system
 
     def test_system_loads_one_no_trump_rule(self) -> None:
         self.assertEqual(self.system.system_id, "balanced-15-17-1nt")
         self.assertEqual(self.system.version, "1.0.0")
-        self.assertEqual(self.system.min_hcp, 15)
-        self.assertEqual(self.system.max_hcp, 17)
+        self.assertEqual(len(self.system.modules), 1)
+        module = self.system.modules[0]
+        self.assertEqual(module.module_id, "opening-1nt-balanced-15-17")
+        rule = module.rules[0]
+        self.assertEqual(rule.condition.min_hcp, 15)
+        self.assertEqual(rule.condition.max_hcp, 17)
+        self.assertEqual(rule.preferred_calls, (Bid(1, Denomination.NOTRUMP),))
 
     def test_bids_one_no_trump_for_qualifying_hand_when_legal(self) -> None:
         hand = HandProfile(16, (5, 3, 3, 2))
@@ -81,7 +103,7 @@ class AuctionTests(unittest.TestCase):
             {PassCall.PASS, Bid(1, Denomination.NOTRUMP)}
         )
 
-        call = self.system.choose_call(hand, (), legal_calls)
+        call = self.system.choose_call(decision_context(hand, (), legal_calls))
 
         self.assertEqual(call, Bid(1, Denomination.NOTRUMP))
 
@@ -93,18 +115,24 @@ class AuctionTests(unittest.TestCase):
         too_few_points = HandProfile(14, (4, 3, 3, 3))
 
         self.assertEqual(
-            self.system.choose_call(unbalanced_hand, (), legal_calls),
-            PassCall.PASS,
-        )
-        self.assertEqual(
-            self.system.choose_call(too_few_points, (), legal_calls),
+            self.system.choose_call(
+                decision_context(unbalanced_hand, (), legal_calls)
+            ),
             PassCall.PASS,
         )
         self.assertEqual(
             self.system.choose_call(
-                HandProfile(16, (4, 3, 3, 3)),
-                (),
-                frozenset({PassCall.PASS}),
+                decision_context(too_few_points, (), legal_calls)
+            ),
+            PassCall.PASS,
+        )
+        self.assertEqual(
+            self.system.choose_call(
+                decision_context(
+                    HandProfile(16, (4, 3, 3, 3)),
+                    (),
+                    frozenset({PassCall.PASS}),
+                )
             ),
             PassCall.PASS,
         )
@@ -129,14 +157,14 @@ balanced_shapes = ["4333", "4432", "5332"]
             path.write_text(config, encoding="utf-8")
             system = load_system(path)
 
-        self.assertIsInstance(system, OneNoTrumpSystem)
-        self.assertTrue(system.out_of_book_when_unmatched)
-        self.assertIsNone(system.default_call)
+        self.assertIs(system.fallback, OutOfBookDecision.OUT_OF_BOOK)
         self.assertIs(
             system.choose_call(
-                HandProfile(10, (4, 3, 3, 3)),
-                (),
-                frozenset({PassCall.PASS, Bid(1, Denomination.NOTRUMP)}),
+                decision_context(
+                    HandProfile(10, (4, 3, 3, 3)),
+                    (),
+                    frozenset({PassCall.PASS, Bid(1, Denomination.NOTRUMP)}),
+                )
             ),
             OutOfBookDecision.OUT_OF_BOOK,
         )
@@ -161,13 +189,14 @@ balanced_shapes = ["4333", "4432", "5332"]
             path.write_text(config, encoding="utf-8")
             system = load_system(path)
 
-        self.assertIsInstance(system, OneNoTrumpSystem)
-        self.assertFalse(system.out_of_book_when_unmatched)
+        self.assertEqual(system.fallback, PassCall.PASS)
         self.assertEqual(
             system.choose_call(
-                HandProfile(10, (4, 3, 3, 3)),
-                (),
-                frozenset({PassCall.PASS}),
+                decision_context(
+                    HandProfile(10, (4, 3, 3, 3)),
+                    (),
+                    frozenset({PassCall.PASS}),
+                )
             ),
             PassCall.PASS,
         )
@@ -250,7 +279,9 @@ balanced_shapes = ["4333", "4432", "5332"]
 
         self.assertEqual(system.system_id, "passout-cheapest-call")
         self.assertEqual(
-            system.choose_call(HandProfile(0, (4, 3, 3, 3)), (), legal_calls),
+            system.choose_call(
+                decision_context(HandProfile(0, (4, 3, 3, 3)), (), legal_calls)
+            ),
             PassCall.PASS,
         )
 
@@ -269,7 +300,14 @@ balanced_shapes = ["4333", "4432", "5332"]
         )
 
         self.assertEqual(
-            system.choose_call(HandProfile(0, (4, 3, 3, 3)), auction, legal_calls),
+            system.choose_call(
+                decision_context(
+                    HandProfile(0, (4, 3, 3, 3)),
+                    auction,
+                    legal_calls,
+                    seat=Seat.WEST,
+                )
+            ),
             Bid(1, Denomination.CLUBS),
         )
 
@@ -284,9 +322,12 @@ balanced_shapes = ["4333", "4432", "5332"]
         )
         self.assertEqual(
             system.choose_call(
-                hand,
-                double_auction,
-                frozenset({PassCall.PASS, DoubleCall.DOUBLE}),
+                decision_context(
+                    hand,
+                    double_auction,
+                    frozenset({PassCall.PASS, DoubleCall.DOUBLE}),
+                    seat=Seat.WEST,
+                )
             ),
             DoubleCall.DOUBLE,
         )
@@ -299,9 +340,12 @@ balanced_shapes = ["4333", "4432", "5332"]
         )
         self.assertEqual(
             system.choose_call(
-                hand,
-                redouble_auction,
-                frozenset({PassCall.PASS, RedoubleCall.REDOUBLE}),
+                decision_context(
+                    hand,
+                    redouble_auction,
+                    frozenset({PassCall.PASS, RedoubleCall.REDOUBLE}),
+                    seat=Seat.NORTH,
+                )
             ),
             RedoubleCall.REDOUBLE,
         )
@@ -313,14 +357,17 @@ balanced_shapes = ["4333", "4432", "5332"]
         )
         self.assertEqual(
             system.choose_call(
-                hand,
-                bid_auction,
-                frozenset(
-                    {
-                        PassCall.PASS,
-                        Bid(1, Denomination.DIAMONDS),
-                        Bid(1, Denomination.HEARTS),
-                    }
+                decision_context(
+                    hand,
+                    bid_auction,
+                    frozenset(
+                        {
+                            PassCall.PASS,
+                            Bid(1, Denomination.DIAMONDS),
+                            Bid(1, Denomination.HEARTS),
+                        }
+                    ),
+                    seat=Seat.WEST,
                 ),
             ),
             Bid(1, Denomination.DIAMONDS),
@@ -338,9 +385,12 @@ balanced_shapes = ["4333", "4432", "5332"]
 
         self.assertEqual(
             system.choose_call(
-                HandProfile(0, (4, 3, 3, 3)),
-                auction,
-                frozenset({PassCall.PASS}),
+                decision_context(
+                    HandProfile(0, (4, 3, 3, 3)),
+                    auction,
+                    frozenset({PassCall.PASS}),
+                    seat=Seat.EAST,
+                )
             ),
             PassCall.PASS,
         )

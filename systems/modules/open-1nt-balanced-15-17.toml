@@ -1,0 +1,15 @@
+schema_version = 1
+kind = "module"
+id = "opening-1nt-balanced-15-17"
+version = "1.0.0"
+name = "Balanced 15-17 1NT opening"
+
+[[rules]]
+id = "open-1nt"
+call = "1NT"
+explanation = "15-17 HCP and one of the specified balanced shapes."
+
+[rules.when]
+min_hcp = 15
+max_hcp = 17
+shapes = ["4333", "4432", "5332"]

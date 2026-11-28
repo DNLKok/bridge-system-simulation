@@ -1,7 +1,11 @@
-schema_version = 2
+schema_version = 1
+kind = "system"
 id = "passout-cheapest-call"
 version = "1.0.0"
 name = "Pass except in passout seat"
-out_of_book = "never"
-default_call = "PASS"
-strategy = "passout"
+on_no_match = "PASS"
+
+[[modules]]
+id = "passout-cheapest-call"
+version = "1.0.0"
+path = "modules/passout-cheapest-call.toml"

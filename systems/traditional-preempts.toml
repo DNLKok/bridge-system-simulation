@@ -1,0 +1,11 @@
+schema_version = 1
+kind = "system"
+id = "traditional-preempts"
+version = "1.0.0"
+name = "Traditional preempts or pass"
+on_no_match = "PASS"
+
+[[modules]]
+id = "traditional-preempts"
+version = "1.0.0"
+path = "modules/traditional-preempts.toml"

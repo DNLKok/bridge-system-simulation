@@ -24,7 +24,7 @@ bridge_sim/
   runner.py      Experiments, repetitions, result writing
 systems/
   modules/       Reusable bidding-rule modules
-  examples/      Complete system definitions
+  *.toml         Complete system manifests
 tests/
   fixtures/      Small, fixed deals and bidding situations
 ```
@@ -94,10 +94,49 @@ auction records can show why a call was selected.
 ## Reusing and composing many systems
 
 Treat a complete bidding system as a named, versioned policy, and shared
-agreements as separately versioned rule modules. A system can include several
-modules and make explicit, named overrides. This is more flexible than copying
-an entire base system for every variation, and more understandable than
-implicit inheritance.
+agreements as separately versioned rule modules. The implemented format uses a
+system manifest with an ordered list of module references; each reference pins
+an ID and version and points to a TOML module file relative to the manifest.
+Modules are tried in order, and the first one to return a legal decision wins.
+The manifest must declare its `on_no_match` fallback. A system can reuse any
+number of versioned modules without embedding their rules in Python.
+
+The current 1NT and passout examples are separate systems, each referencing
+its own module. They are intentionally not combined.
+
+The loader checks module IDs and pinned versions, rejects duplicate module
+references and invalid schemas, and preserves support for the older
+single-system TOML format by translating legacy definitions into the same
+generic rule representation. Module TOMLs contain ordered rules, conditions,
+and actions. The interpreter supports HCP bounds, shape sets, passout-seat
+conditions, a fixed call, or an ordered `try_calls` preference list. New
+agreements can be added by authoring module data using those primitives;
+adding a new condition primitive requires extending the generic interpreter.
+The runtime decision context includes hand, auction, legal calls, seat, dealer,
+and vulnerability, allowing future rules to use only information available to
+that bidder.
+
+A module rule stores the agreement itself:
+
+```toml
+[[rules]]
+id = "open-1nt"
+call = "1NT"
+
+[rules.when]
+min_hcp = 15
+max_hcp = 17
+shapes = ["4333", "4432", "5332"]
+```
+
+`try_calls` lists call tokens in preference order and the interpreter selects
+the first legal one. Auction-only rules can use `passout_seat`; for example, a
+passout module stores both that condition and its ordered call list in TOML.
+No specific 1NT or passout policy is implemented as a Python module class.
+
+Explicit named overrides, rule priorities, and situation-based delegation to
+other systems are possible future extensions; the current format does not
+silently implement them.
 
 Also support a system that delegates a decision to another system in a defined
 situation. For example, a future composite policy could use one pinned system

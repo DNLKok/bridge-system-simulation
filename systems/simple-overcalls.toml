@@ -1,0 +1,11 @@
+schema_version = 1
+kind = "system"
+id = "simple-overcalls"
+version = "1.0.0"
+name = "Simple overcalls and takeout doubles"
+on_no_match = "PASS"
+
+[[modules]]
+id = "simple-overcalls"
+version = "1.0.0"
+path = "modules/simple-overcalls.toml"

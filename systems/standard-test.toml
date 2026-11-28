@@ -1,0 +1,21 @@
+schema_version = 1
+kind = "system"
+id = "standard-test"
+version = "1.0.0"
+name = "Standard openings, preempts, and overcalls"
+on_no_match = "PASS"
+
+[[modules]]
+id = "standard-openings"
+version = "1.0.0"
+path = "modules/standard-openings.toml"
+
+[[modules]]
+id = "traditional-preempts"
+version = "1.0.0"
+path = "modules/traditional-preempts.toml"
+
+[[modules]]
+id = "simple-overcalls"
+version = "1.0.0"
+path = "modules/simple-overcalls.toml"

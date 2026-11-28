@@ -77,10 +77,12 @@ Call: TypeAlias = Bid | PassCall | DoubleCall | RedoubleCall
 
 @dataclass(frozen=True)
 class HandProfile:
-    """Auction-relevant facts from an existing hand; contains no card data."""
+    """Auction-relevant facts without retaining a full hand of cards."""
 
     hcp: int
     shape: tuple[int, int, int, int]
+    suit_hcp: tuple[int, int, int, int] | None = None
+    suit_honors: tuple[str, str, str, str] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -100,6 +102,45 @@ class HandProfile:
             raise ValueError("Each suit length must be an integer between 0 and 13.")
         if sum(self.shape) != 13:
             raise ValueError("The four suit lengths in a hand must total 13.")
+        if self.suit_hcp is not None:
+            if not isinstance(self.suit_hcp, tuple) or len(self.suit_hcp) != 4:
+                raise ValueError("Suit HCP must contain four suit values.")
+            if any(
+                not isinstance(points, int)
+                or isinstance(points, bool)
+                or not 0 <= points <= 10
+                for points in self.suit_hcp
+            ):
+                raise ValueError("Each suit HCP value must be an integer from 0 to 10.")
+            if sum(self.suit_hcp) != self.hcp:
+                raise ValueError("Suit HCP values must total the hand's HCP.")
+        if self.suit_honors is not None:
+            if (
+                not isinstance(self.suit_honors, tuple)
+                or len(self.suit_honors) != 4
+            ):
+                raise ValueError("Suit honors must contain four suit values.")
+            if any(
+                not isinstance(honors, str)
+                or any(rank not in "AKQJ" for rank in honors)
+                or len(set(honors)) != len(honors)
+                for honors in self.suit_honors
+            ):
+                raise ValueError(
+                    "Each suit honor string must contain distinct A, K, Q, or J ranks."
+                )
+            honor_points = {"A": 4, "K": 3, "Q": 2, "J": 1}
+            calculated_suit_hcp = tuple(
+                sum(honor_points[rank] for rank in honors)
+                for honors in self.suit_honors
+            )
+            if sum(calculated_suit_hcp) > self.hcp:
+                raise ValueError("Suit honors cannot exceed the hand's HCP.")
+            if self.suit_hcp is not None:
+                if calculated_suit_hcp != self.suit_hcp:
+                    raise ValueError(
+                        "Suit honors must agree with the per-suit HCP values."
+                    )
 
     @property
     def canonical_shape(self) -> tuple[int, int, int, int]:

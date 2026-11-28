@@ -1,0 +1,90 @@
+schema_version = 1
+kind = "module"
+id = "stayman-transfer-nt-corrections"
+version = "1.0.0"
+name = "Stayman-Jacoby NT signoff corrections"
+
+partner_opening_calls = ["1NT"]
+uncontested_partner_opening = true
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "2NT", "PASS"]
+call = "3H"
+establishes_fit = "hearts"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "2NT", "PASS"]
+call = "4H"
+establishes_fit = "hearts"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "3NT", "PASS"]
+call = "4H"
+establishes_fit = "hearts"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "2NT", "PASS"]
+call = "3S"
+establishes_fit = "spades"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "2NT", "PASS"]
+call = "4S"
+establishes_fit = "spades"
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "3NT", "PASS"]
+call = "4S"
+establishes_fit = "spades"
+
+[[rules]]
+id = "force-heart-game-after-gf-two-notrump-signoff"
+call = "4H"
+
+[rules.when]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "2NT", "PASS"]
+auction_strength = "game_forcing"
+suit_lengths = { hearts = { min = 3 } }
+
+[[rules]]
+id = "simulate-heart-contract-after-two-notrump-signoff"
+evaluate_calls = ["PASS", "3H", "3NT", "4H"]
+
+[rules.when]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "2NT", "PASS"]
+auction_strength = "game_might_still_be_possible"
+suit_lengths = { hearts = { min = 3 } }
+
+[[rules]]
+id = "simulate-heart-game-after-three-notrump-signoff"
+evaluate_calls = ["PASS", "4H"]
+
+[rules.when]
+after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "3NT", "PASS"]
+suit_lengths = { hearts = { min = 3 } }
+
+[[rules]]
+id = "force-spade-game-after-gf-two-notrump-signoff"
+call = "4S"
+
+[rules.when]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "2NT", "PASS"]
+auction_strength = "game_forcing"
+suit_lengths = { spades = { min = 3 } }
+
+[[rules]]
+id = "simulate-spade-contract-after-two-notrump-signoff"
+evaluate_calls = ["PASS", "3S", "3NT", "4S"]
+
+[rules.when]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "2NT", "PASS"]
+auction_strength = "game_might_still_be_possible"
+suit_lengths = { spades = { min = 3 } }
+
+[[rules]]
+id = "simulate-spade-game-after-three-notrump-signoff"
+evaluate_calls = ["PASS", "4S"]
+
+[rules.when]
+after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "3NT", "PASS"]
+suit_lengths = { spades = { min = 3 } }

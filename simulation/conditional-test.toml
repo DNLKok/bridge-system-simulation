@@ -1,0 +1,18 @@
+schema_version = 1
+
+[simulation]
+deal_count = 32
+seed = "unix"
+decision_simulation_n = 64
+advanced_out_of_book = false
+output_directory = "../reports"
+
+[systems]
+north_south = "../systems/standard-stayman-jacoby.toml"
+north_south_abbreviation = "SJ"
+east_west = "../systems/always-pass.toml"
+east_west_abbreviation = "PASS"
+
+[condition]
+label = "SJ-2S"
+auction = ["N:1NT", "E:PASS", "S:2S"]

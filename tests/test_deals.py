@@ -30,7 +30,7 @@ class PBNTests(unittest.TestCase):
         )
         self.assertEqual(
             boards[0].hand_for(Seat.NORTH),
-            HandProfile(5, (3, 4, 6, 0)),
+            HandProfile(5, (3, 4, 6, 0), (2, 0, 3, 0), ("Q", "", "QJ", "")),
         )
         self.assertEqual(
             boards[0].hands[Seat.NORTH].suits,

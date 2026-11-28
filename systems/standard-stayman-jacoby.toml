@@ -1,0 +1,36 @@
+schema_version = 1
+kind = "system"
+id = "standard-stayman-jacoby"
+version = "1.7.0"
+name = "Standard openings + Stayman-Jacoby"
+on_no_match = "PASS"
+
+[[modules]]
+id = "standard-openings"
+version = "1.0.0"
+path = "modules/standard-openings.toml"
+
+[[modules]]
+id = "respond-to-invitational-only"
+version = "1.0.0"
+path = "modules/respond-to-invitational-only.toml"
+
+[[modules]]
+id = "stayman-gf-fit-raises"
+version = "1.0.0"
+path = "modules/stayman-gf-fit-raises.toml"
+
+[[modules]]
+id = "stayman-transfer-nt-corrections"
+version = "1.0.0"
+path = "modules/stayman-transfer-nt-corrections.toml"
+
+[[modules]]
+id = "jump-to-game-in-GF"
+version = "1.0.0"
+path = "modules/jump-to-game-in-GF.toml"
+
+[[modules]]
+id = "stayman-jacoby"
+version = "1.4.0"
+path = "modules/stayman-jacoby.toml"

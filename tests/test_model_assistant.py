@@ -22,6 +22,7 @@ from bridge_sim.model_assistant import (
     _advanced_candidate_calls,
     _result_as_json,
     _score_call_ns,
+    rate_candidate_calls,
     run_model_assistant,
 )
 
@@ -199,6 +200,31 @@ class ModelAssistantTests(unittest.TestCase):
 
         self.assertIn("produce 3", provider.script or "")
         self.assertEqual(len(result.boards), 3)
+
+    def test_rates_only_configured_candidate_calls(self) -> None:
+        candidates = (
+            PassCall.PASS,
+            Bid(1, Denomination.CLUBS),
+        )
+        provider = FakeDealerProvider((self.board,))
+
+        ratings = rate_candidate_calls(
+            perspective=self.board.dealer,
+            hand=self.hand,
+            auction=(),
+            partner_system=PASSOUT_SYSTEM,
+            opponent_system=PASSOUT_SYSTEM,
+            dealer=self.board.dealer,
+            vulnerability=self.board.vulnerability,
+            candidates=candidates,
+            n=1,
+            seed=20261127,
+            dealer_provider=provider,
+            dds_solver=FakeDDS(),
+        )
+
+        self.assertEqual(tuple(rating.call for rating in ratings), candidates)
+        self.assertIn("produce 1", provider.script or "")
 
     def test_advanced_mode_uses_partner_basic_rating_for_non_pass_calls(self) -> None:
         system_config = """\
@@ -510,6 +536,31 @@ balanced_shapes = ["4333", "4432", "5332"]
             ),
             90,
         )
+
+    def test_candidate_contract_uses_partners_first_bid_as_declarer(self) -> None:
+        table = {
+            denomination: {seat: 0 for seat in Seat}
+            for denomination in Denomination
+        }
+        table[Denomination.HEARTS][Seat.NORTH] = 5
+        table[Denomination.HEARTS][Seat.SOUTH] = 10
+        auction = (
+            AuctionEntry(Seat.NORTH, Bid(1, Denomination.NOTRUMP)),
+            AuctionEntry(Seat.EAST, PassCall.PASS),
+            AuctionEntry(Seat.SOUTH, Bid(3, Denomination.HEARTS)),
+            AuctionEntry(Seat.WEST, PassCall.PASS),
+        )
+
+        score = _score_call_ns(
+            Bid(4, Denomination.HEARTS),
+            table,
+            Vulnerability.NONE,
+            Seat.NORTH,
+            None,
+            auction,
+        )
+
+        self.assertEqual(score, 420)
 
 
 if __name__ == "__main__":

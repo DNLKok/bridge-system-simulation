@@ -1,0 +1,12 @@
+schema_version = 1
+kind = "module"
+id = "jump-to-game-in-GF"
+version = "1.0.0"
+name = "Jump to game in a game force"
+
+[[rules]]
+id = "bid-game-after-public-game-force"
+jump_to_game_in_gf = true
+
+[rules.when]
+auction_strength = "game_forcing"
