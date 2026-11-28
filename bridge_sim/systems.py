@@ -56,6 +56,7 @@ class RuleCondition:
     shapes: frozenset[tuple[int, int, int, int]] | None = None
     passout_seat: bool | None = None
     no_contract_bid: bool | None = None
+    opponent_opening_calls: frozenset[Bid] | None = None
     suit: Denomination | None = None
     min_suit_length: int | None = None
     max_suit_length: int | None = None
@@ -63,6 +64,13 @@ class RuleCondition:
     max_outside_major_length: int | None = None
     longest_qualifying_suit_min_length: int | None = None
     suit_tie_order: tuple[Denomination, ...] | None = None
+    suit_lengths: tuple[
+        tuple[Denomination, int | None, int | None], ...
+    ] = ()
+    stopper_suit: Denomination | None = None
+    has_stopper: bool | None = None
+    nonjump_new_suit_overcall: bool = False
+    suit_overcall_tiers: tuple[tuple[int, int, int], ...] = ()
 
     def matches(self, context: DecisionContext) -> bool:
         if not self.matches_public_context(context):
@@ -73,6 +81,27 @@ class RuleCondition:
             return False
         if self.shapes is not None and context.hand.canonical_shape not in self.shapes:
             return False
+        for suit, minimum, maximum in self.suit_lengths:
+            length = context.hand.shape[_SUIT_ORDER.index(suit)]
+            if minimum is not None and length < minimum:
+                return False
+            if maximum is not None and length > maximum:
+                return False
+        if self.stopper_suit is not None and self.has_stopper is not None:
+            if context.hand.suit_honors is None:
+                raise ValueError(
+                    "This bidding rule requires suit honors, which are unavailable "
+                    "in this hand profile."
+                )
+            suit_index = _SUIT_ORDER.index(self.stopper_suit)
+            if (
+                _has_stopper(
+                    context.hand.suit_honors[suit_index],
+                    context.hand.shape[suit_index],
+                )
+                is not self.has_stopper
+            ):
+                return False
         if self.suit is not None:
             suit_index = _SUIT_ORDER.index(self.suit)
             suit_length = context.hand.shape[suit_index]
@@ -138,6 +167,8 @@ class RuleCondition:
             has_contract_bid = any(isinstance(entry.call, Bid) for entry in context.auction)
             if has_contract_bid is self.no_contract_bid:
                 return False
+        if not _matches_opponent_opening(context, self.opponent_opening_calls):
+            return False
         return True
 
     def dealer_expression(self, seat: Seat) -> str | None:
@@ -153,6 +184,17 @@ class RuleCondition:
                 for shape in sorted(self.shapes)
             )
             expressions.append(f"shape({seat_name}, {shape_options})")
+        for suit, minimum, maximum in self.suit_lengths:
+            suit_name = _SUIT_NAMES[suit]
+            if minimum is not None:
+                expressions.append(f"({suit_name}({seat_name}) >= {minimum})")
+            if maximum is not None:
+                expressions.append(f"({suit_name}({seat_name}) <= {maximum})")
+        if self.stopper_suit is not None and self.has_stopper is not None:
+            stopper = _dealer_stopper_expression(seat_name, self.stopper_suit)
+            expressions.append(
+                stopper if self.has_stopper else f"!({stopper})"
+            )
         if self.suit is not None:
             suit_name = _SUIT_NAMES[self.suit]
             if self.min_suit_length is not None:
@@ -244,6 +286,8 @@ class BiddingRule:
     ) -> DealerCallCondition:
         if not self.condition.matches_public_context(context):
             return DealerCallCondition()
+        if self.condition.suit_overcall_tiers:
+            return self._dealer_suit_overcall_condition(context, observed_call)
         expected_call = self._selected_call(context)
         if expected_call is None:
             return DealerCallCondition()
@@ -257,14 +301,101 @@ class BiddingRule:
         return DealerCallCondition((f"!({expression})",))
 
     def _selected_call(self, context: DecisionContext) -> Call | None:
+        if self.condition.suit_overcall_tiers:
+            tie_order = self.condition.suit_tie_order
+            if tie_order is None:
+                raise RuntimeError("Suit overcall tiers must define a tie order.")
+            candidates = [
+                call
+                for call in self.preferred_calls
+                if isinstance(call, Bid)
+                and call in context.legal_calls
+                and _is_nonjump_new_suit_overcall(context, call)
+                and _suit_overcall_qualifies(context, call, self.condition)
+            ]
+            return min(
+                candidates,
+                key=lambda call: (
+                    -context.hand.shape[_SUIT_ORDER.index(call.denomination)],
+                    tie_order.index(call.denomination),
+                ),
+                default=None,
+            )
         return next(
             (
                 call
                 for call in self.preferred_calls
                 if call in context.legal_calls
+                and _call_matches_rule(context, call, self.condition)
             ),
             None,
         )
+
+    def _dealer_suit_overcall_condition(
+        self,
+        context: DecisionContext,
+        observed_call: Call,
+    ) -> DealerCallCondition:
+        tie_order = self.condition.suit_tie_order
+        if tie_order is None:
+            raise RuntimeError("Suit overcall tiers must define a tie order.")
+        candidates = tuple(
+            call
+            for call in self.preferred_calls
+            if isinstance(call, Bid)
+            and call in context.legal_calls
+            and any(
+                level == call.level
+                for level, _, _ in self.condition.suit_overcall_tiers
+            )
+            and _is_nonjump_new_suit_overcall(context, call)
+        )
+        qualifiers = {
+            call: _suit_overcall_dealer_expression(context.seat, call, self.condition)
+            for call in candidates
+        }
+        common = self.condition.dealer_expression(context.seat)
+        if observed_call not in qualifiers:
+            all_qualifiers = " || ".join(
+                f"({expression})" for expression in qualifiers.values()
+            )
+            if not all_qualifiers:
+                return DealerCallCondition()
+            active = (
+                f"({common}) && ({all_qualifiers})"
+                if common is not None
+                else f"({all_qualifiers})"
+            )
+            return DealerCallCondition((f"!({active})",))
+
+        observed_suit = observed_call.denomination
+        observed_length = (
+            f"{_SUIT_NAMES[observed_suit]}({_SEAT_NAMES[context.seat]})"
+        )
+        higher_priority: list[str] = []
+        for call, expression in qualifiers.items():
+            if call == observed_call:
+                continue
+            other_length = (
+                f"{_SUIT_NAMES[call.denomination]}({_SEAT_NAMES[context.seat]})"
+            )
+            is_preferred = (
+                call.denomination is not observed_suit
+                and tie_order.index(call.denomination)
+                < tie_order.index(observed_suit)
+            )
+            comparison = (
+                f"({other_length} >= {observed_length})"
+                if is_preferred
+                else f"({other_length} > {observed_length})"
+            )
+            higher_priority.append(f"(({expression}) && {comparison})")
+        selection = f"({qualifiers[observed_call]})"
+        if higher_priority:
+            selection += " && !(" + " || ".join(higher_priority) + ")"
+        if common is not None:
+            selection = f"({common}) && ({selection})"
+        return DealerCallCondition((selection,), selects_call=True)
 
 
 @dataclass(frozen=True)
@@ -273,8 +404,11 @@ class BiddingModule:
     version: str
     name: str
     rules: tuple[BiddingRule, ...]
+    opponent_opening_calls: frozenset[Bid] | None = None
 
     def choose(self, context: DecisionContext) -> ModuleDecision | None:
+        if not _matches_opponent_opening(context, self.opponent_opening_calls):
+            return None
         for rule in self.rules:
             decision = rule.decide(context, self.module_id)
             if decision is not None:
@@ -286,6 +420,8 @@ class BiddingModule:
         context: DecisionContext,
         observed_call: Call,
     ) -> DealerCallCondition:
+        if not _matches_opponent_opening(context, self.opponent_opening_calls):
+            return DealerCallCondition()
         expressions: list[str] = []
         for rule in self.rules:
             condition = rule.dealer_call_condition(context, observed_call)
@@ -377,12 +513,17 @@ def load_module(path: str | Path) -> BiddingModule:
 
     if config.get("schema_version") != 1 or config.get("kind") != "module":
         raise ValueError(f"Unsupported module schema in {module_path}.")
-    _require_keys(
-        config,
-        {"schema_version", "kind", "id", "version", "name", "rules"},
-        f"module file {module_path}",
-    )
+    module_keys = {"schema_version", "kind", "id", "version", "name", "rules"}
+    expected_keys = module_keys
+    if "opponent_opening_calls" in config:
+        expected_keys = module_keys | {"opponent_opening_calls"}
+    _require_keys(config, expected_keys, f"module file {module_path}")
     module_id, version, name = _validate_metadata(config)
+    opening_calls = (
+        _parse_opponent_opening_calls(config["opponent_opening_calls"])
+        if "opponent_opening_calls" in config
+        else None
+    )
     raw_rules = config["rules"]
     if not isinstance(raw_rules, list) or not raw_rules:
         raise ValueError("A module must define at least one rule.")
@@ -390,7 +531,7 @@ def load_module(path: str | Path) -> BiddingModule:
     rule_ids = [rule.rule_id for rule in rules]
     if len(set(rule_ids)) != len(rule_ids):
         raise ValueError(f"Module {module_id!r} defines duplicate rule IDs.")
-    return BiddingModule(module_id, version, name, rules)
+    return BiddingModule(module_id, version, name, rules, opening_calls)
 
 
 def _load_composite_system(
@@ -593,6 +734,7 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
         "shapes",
         "passout_seat",
         "no_contract_bid",
+        "opponent_opening_calls",
         "suit",
         "min_suit_length",
         "max_suit_length",
@@ -600,6 +742,11 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
         "max_outside_major_length",
         "longest_qualifying_suit_min_length",
         "suit_tie_order",
+        "suit_lengths",
+        "stopper_suit",
+        "has_stopper",
+        "nonjump_new_suit_overcall",
+        "suit_overcall_tiers",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -630,6 +777,11 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
     no_contract_bid = value.get("no_contract_bid")
     if no_contract_bid is not None and not isinstance(no_contract_bid, bool):
         raise ValueError(f"Module rule {index} no_contract_bid must be a boolean.")
+    opponent_opening_calls = (
+        _parse_opponent_opening_calls(value["opponent_opening_calls"])
+        if "opponent_opening_calls" in value
+        else None
+    )
     raw_suit = value.get("suit")
     suit: Denomination | None = None
     if raw_suit is not None:
@@ -661,6 +813,38 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
             raise ValueError(
                 f"Module rule {index} suit_tie_order must not repeat a suit."
             )
+    suit_lengths = _parse_suit_lengths(value.get("suit_lengths"), index)
+    raw_stopper_suit = value.get("stopper_suit")
+    stopper_suit: Denomination | None = None
+    if raw_stopper_suit is not None:
+        if not isinstance(raw_stopper_suit, str):
+            raise ValueError(f"Module rule {index} stopper_suit must be a suit name.")
+        stopper_suit = _parse_suit(raw_stopper_suit, index)
+    has_stopper = value.get("has_stopper")
+    if has_stopper is not None and not isinstance(has_stopper, bool):
+        raise ValueError(f"Module rule {index} has_stopper must be a boolean.")
+    if (stopper_suit is None) != (has_stopper is None):
+        raise ValueError(
+            f"Module rule {index} must define stopper_suit and has_stopper together."
+        )
+    nonjump_new_suit_overcall = value.get("nonjump_new_suit_overcall", False)
+    if not isinstance(nonjump_new_suit_overcall, bool):
+        raise ValueError(
+            f"Module rule {index} nonjump_new_suit_overcall must be a boolean."
+        )
+    suit_overcall_tiers = _parse_suit_overcall_tiers(
+        value.get("suit_overcall_tiers"),
+        index,
+    )
+    if suit_overcall_tiers and not nonjump_new_suit_overcall:
+        raise ValueError(
+            f"Module rule {index} suit_overcall_tiers require "
+            "nonjump_new_suit_overcall = true."
+        )
+    if suit_overcall_tiers and suit_tie_order is None:
+        raise ValueError(
+            f"Module rule {index} suit_overcall_tiers require suit_tie_order."
+        )
     if any(item is not None for item in suit_length_values.values()) and suit is None:
         raise ValueError(f"Module rule {index} suit conditions require a suit.")
     if (
@@ -685,16 +869,25 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
     if (
         suit_tie_order is not None
         and suit_length_values["longest_qualifying_suit_min_length"] is None
+        and not suit_overcall_tiers
     ):
-        raise ValueError("suit_tie_order requires longest_qualifying_suit_min_length.")
+        raise ValueError(
+            "suit_tie_order requires a longest-suit or suit-overcall condition."
+        )
     return RuleCondition(
         min_hcp=min_hcp,
         max_hcp=max_hcp,
         shapes=shapes,
         passout_seat=passout_seat,
         no_contract_bid=no_contract_bid,
+        opponent_opening_calls=opponent_opening_calls,
         suit=suit,
         suit_tie_order=suit_tie_order,
+        suit_lengths=suit_lengths,
+        stopper_suit=stopper_suit,
+        has_stopper=has_stopper,
+        nonjump_new_suit_overcall=nonjump_new_suit_overcall,
+        suit_overcall_tiers=suit_overcall_tiers,
         **suit_length_values,
     )
 
@@ -730,6 +923,219 @@ def _parse_suit(value: str, index: int) -> Denomination:
         raise ValueError(
             f"Module rule {index} suit must be clubs, diamonds, hearts, or spades."
         ) from error
+
+
+def _parse_suit_lengths(
+    value: object,
+    index: int,
+) -> tuple[tuple[Denomination, int | None, int | None], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"Module rule {index} suit_lengths must be a non-empty table.")
+    lengths: list[tuple[Denomination, int | None, int | None]] = []
+    for suit_name, bounds in value.items():
+        if not isinstance(suit_name, str) or not isinstance(bounds, dict):
+            raise ValueError(
+                f"Module rule {index} suit_lengths must map suit names to bounds."
+            )
+        suit = _parse_suit(suit_name, index)
+        if set(bounds) - {"min", "max"} or not bounds:
+            raise ValueError(
+                f"Module rule {index} suit length bounds must use min and/or max."
+            )
+        minimum = _parse_integer_condition(bounds, "min", 0, 13)
+        maximum = _parse_integer_condition(bounds, "max", 0, 13)
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError(
+                f"Module rule {index} suit length minimum cannot exceed maximum."
+            )
+        lengths.append((suit, minimum, maximum))
+    if len({suit for suit, _, _ in lengths}) != len(lengths):
+        raise ValueError(f"Module rule {index} suit_lengths repeats a suit.")
+    return tuple(lengths)
+
+
+def _parse_suit_overcall_tiers(
+    value: object,
+    index: int,
+) -> tuple[tuple[int, int, int], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ValueError(
+            f"Module rule {index} suit_overcall_tiers must be a non-empty array."
+        )
+    tiers: list[tuple[int, int, int]] = []
+    for tier in value:
+        if not isinstance(tier, dict) or set(tier) != {
+            "level",
+            "min_hcp",
+            "min_suit_length",
+        }:
+            raise ValueError(
+                f"Module rule {index} suit overcall tiers must define level, "
+                "min_hcp, and min_suit_length."
+            )
+        level = _parse_integer_condition(tier, "level", 1, 7)
+        minimum_hcp = _parse_integer_condition(tier, "min_hcp", 0, 37)
+        minimum_length = _parse_integer_condition(tier, "min_suit_length", 0, 13)
+        if level is None or minimum_hcp is None or minimum_length is None:
+            raise ValueError(f"Module rule {index} has an incomplete suit overcall tier.")
+        tiers.append((level, minimum_hcp, minimum_length))
+    return tuple(tiers)
+
+
+def _parse_opponent_opening_calls(value: object) -> frozenset[Bid]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("opponent_opening_calls must be a non-empty array.")
+    calls = tuple(_parse_call(call) for call in value)
+    if any(not isinstance(call, Bid) for call in calls):
+        raise ValueError(
+            "opponent_opening_calls must contain suit bids at the 1- or 2-level."
+        )
+    opening_calls = tuple(call for call in calls if isinstance(call, Bid))
+    if any(
+        call.level > 2 or call.denomination is Denomination.NOTRUMP
+        for call in opening_calls
+    ):
+        raise ValueError(
+            "opponent_opening_calls must contain suit bids at the 1- or 2-level."
+        )
+    if len(set(calls)) != len(calls):
+        raise ValueError("opponent_opening_calls must not repeat a bid.")
+    return frozenset(opening_calls)
+
+
+def _call_matches_rule(
+    context: DecisionContext,
+    call: Call,
+    condition: RuleCondition,
+) -> bool:
+    if not condition.nonjump_new_suit_overcall:
+        return True
+    if (
+        not isinstance(call, Bid)
+        or not _is_nonjump_new_suit_overcall(context, call)
+        or (condition.suit is not None and call.denomination is not condition.suit)
+    ):
+        return False
+    return True
+
+
+def _is_nonjump_new_suit_overcall(
+    context: DecisionContext,
+    call: Bid,
+) -> bool:
+    opening = _opponent_opening(context)
+    if (
+        opening is None
+        or call.denomination is Denomination.NOTRUMP
+        or call.denomination is opening.denomination
+    ):
+        return False
+    cheapest_in_suit = min(
+        (
+            legal_call
+            for legal_call in context.legal_calls
+            if isinstance(legal_call, Bid)
+            and legal_call.denomination is call.denomination
+        ),
+        key=lambda legal_call: legal_call.order,
+        default=None,
+    )
+    return cheapest_in_suit == call
+
+
+def _suit_overcall_qualifies(
+    context: DecisionContext,
+    call: Bid,
+    condition: RuleCondition,
+) -> bool:
+    suit_length = context.hand.shape[_SUIT_ORDER.index(call.denomination)]
+    return any(
+        call.level == level
+        and context.hand.hcp >= minimum_hcp
+        and suit_length >= minimum_length
+        for level, minimum_hcp, minimum_length in condition.suit_overcall_tiers
+    )
+
+
+def _suit_overcall_dealer_expression(
+    seat: Seat,
+    call: Bid,
+    condition: RuleCondition,
+) -> str:
+    seat_name = _SEAT_NAMES[seat]
+    suit_name = _SUIT_NAMES[call.denomination]
+    alternatives = (
+        f"((hcp({seat_name}) >= {minimum_hcp}) && "
+        f"({suit_name}({seat_name}) >= {minimum_length}))"
+        for level, minimum_hcp, minimum_length in condition.suit_overcall_tiers
+        if level == call.level
+    )
+    return "(" + " || ".join(alternatives) + ")"
+
+
+def _matches_opponent_opening(
+    context: DecisionContext,
+    opening_calls: frozenset[Bid] | None,
+) -> bool:
+    if opening_calls is None:
+        return True
+    opening = _opponent_opening(context)
+    return opening is not None and opening in opening_calls
+
+
+def _opponent_opening(context: DecisionContext) -> Bid | None:
+    if not context.auction:
+        return None
+    last_entry = context.auction[-1]
+    last_call = last_entry.call
+    if (
+        not isinstance(last_call, Bid)
+        or last_entry.seat.next is not context.seat
+        or _same_partnership(last_entry.seat, context.seat)
+    ):
+        return None
+    contract_bids = [
+        entry for entry in context.auction if isinstance(entry.call, Bid)
+    ]
+    if len(contract_bids) != 1 or contract_bids[0] != last_entry:
+        return None
+    return last_call
+
+
+def _same_partnership(left: Seat, right: Seat) -> bool:
+    return (left in (Seat.NORTH, Seat.SOUTH)) == (
+        right in (Seat.NORTH, Seat.SOUTH)
+    )
+
+
+def _has_stopper(honors: str, suit_length: int) -> bool:
+    return (
+        "A" in honors
+        or "K" in honors
+        or ("Q" in honors and suit_length >= 3)
+        or ("J" in honors and suit_length >= 4)
+        or suit_length >= 5
+    )
+
+
+def _dealer_stopper_expression(seat_name: str, suit: Denomination) -> str:
+    suit_name = _SUIT_NAMES[suit]
+    suit_code = _SUIT_CARD_CODES[suit]
+    return "(" + " || ".join(
+        (
+            f"hascard({seat_name}, A{suit_code})",
+            f"hascard({seat_name}, K{suit_code})",
+            f"(({suit_name}({seat_name}) >= 3) && "
+            f"hascard({seat_name}, Q{suit_code}))",
+            f"(({suit_name}({seat_name}) >= 4) && "
+            f"hascard({seat_name}, J{suit_code}))",
+            f"({suit_name}({seat_name}) >= 5)",
+        )
+    ) + ")"
 
 
 def _outside_majors_qualify(
@@ -887,6 +1293,12 @@ _SUIT_NAMES = {
     Denomination.HEARTS: "hearts",
     Denomination.DIAMONDS: "diamonds",
     Denomination.CLUBS: "clubs",
+}
+_SUIT_CARD_CODES = {
+    Denomination.SPADES: "S",
+    Denomination.HEARTS: "H",
+    Denomination.DIAMONDS: "D",
+    Denomination.CLUBS: "C",
 }
 
 

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>What systems.py Does</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 15mm 17mm;
+    }
+    body {
+      color: #17212b;
+      font: 10pt/1.35 "Liberation Sans", Arial, sans-serif;
+      margin: 0;
+    }
+    h1 {
+      color: #123b5d;
+      font-size: 23pt;
+      margin: 0 0 3mm;
+    }
+    h2 {
+      border-bottom: 1px solid #9db4c5;
+      color: #123b5d;
+      font-size: 14pt;
+      margin: 5mm 0 2mm;
+      padding-bottom: 1mm;
+    }
+    h3 {
+      color: #245b7d;
+      font-size: 11pt;
+      margin: 3mm 0 1mm;
+    }
+    p {
+      margin: 1.5mm 0;
+    }
+    ul, ol {
+      margin: 1mm 0 2mm;
+      padding-left: 6mm;
+    }
+    li {
+      margin: 0.6mm 0;
+    }
+    code {
+      color: #174e70;
+      font: 9pt "Liberation Mono", monospace;
+    }
+    .subtitle {
+      color: #526777;
+      font-size: 11pt;
+      margin: 0 0 4mm;
+    }
+    .page-two {
+      page-break-before: always;
+    }
+    .refs {
+      border-top: 1px solid #9db4c5;
+      color: #435665;
+      font-size: 8.5pt;
+      margin-top: 4mm;
+      padding-top: 2mm;
+    }
+    .note {
+      background: #eef5f8;
+      border-left: 3px solid #4384a8;
+      margin: 2mm 0;
+      padding: 2mm 3mm;
+    }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>What <code>systems.py</code> Does</h1>
+    <p class="subtitle">A functional guide to how bidding agreements become decisions</p>
+
+    <h2>Purpose</h2>
+    <p>
+      <code>systems.py</code> is the bridge between a bidding agreement and a
+      call in an auction. It loads a system's rules, checks them against the
+      current hand and auction, and returns the first applicable legal call.
+      The agreement itself lives primarily in TOML files, so different systems
+      can combine reusable modules without putting each bidding convention in
+      Python code.
+    </p>
+
+    <h2>From files to a usable system</h2>
+    <ol>
+      <li>
+        A <em>system manifest</em> names its modules in priority order and says
+        what to do if none applies.
+      </li>
+      <li>
+        Each <em>module</em> contains ordered rules. A rule describes when it
+        applies and either one call or a preference list of calls.
+      </li>
+      <li>
+        <code>load_system()</code> reads the manifest and assembles the
+        referenced modules. It checks that each module's ID and version agree
+        with the manifest, and that the files describe a supported system.
+        <code>load_module()</code> reads and checks a module on its own.
+      </li>
+    </ol>
+    <p>
+      This makes a system a composition of agreements: a system author can
+      reuse a module, change module order, or substitute another module while
+      keeping the remaining modules intact. Older single-system TOML files are
+      also accepted and treated as a one-rule system.
+    </p>
+
+    <h2>How a call is chosen</h2>
+    <p>
+      The caller provides the current seat's hand facts, the auction so far,
+      the calls that are legal now, the dealer, and vulnerability. Together
+      these describe the decision being made; they do not themselves specify a
+      bidding agreement.
+    </p>
+    <ol>
+      <li>
+        The system checks its modules in manifest order. Earlier modules have
+        priority over later ones.
+      </li>
+      <li>
+        Within each module, rules are checked in file order. A rule can depend
+        on hand facts such as HCP, shape, suit length or suit HCP, and on
+        auction facts such as whether the seat is at passout or no contract bid
+        has yet occurred.
+      </li>
+      <li>
+        When a rule applies, its preferred calls are considered in order. The
+        first call that is legal in the current auction is selected. If no
+        module provides a call, the system's configured fallback is used.
+      </li>
+    </ol>
+    <p>
+      The fallback may be a regular call (often pass) or the explicit
+      <code>OUT_OF_BOOK</code> result. The latter means the system has no
+      defined answer for this situation; it is not itself a bridge call.
+      <code>choose_call()</code> also guards against returning an illegal call.
+    </p>
+    <div class="note">
+      <strong>In short:</strong> system order determines which agreement gets
+      the first say; rule and call order determine its preferred legal action;
+      the fallback handles everything left over.
+    </div>
+  </section>
+
+  <section class="page-two">
+    <h2>How it connects to the rest of the workspace</h2>
+    <h3>Running an auction</h3>
+    <p>
+      <code>auction.run_auction()</code> manages turn-taking and legal calls.
+      At each turn it builds a decision context and asks the relevant
+      partnership's system for a call. It records an ordinary call and
+      continues; if the system returns <code>OUT_OF_BOOK</code>, the auction
+      runner reports that it needs a separate recommendation rather than
+      treating that result as a bid.
+    </p>
+
+    <h3>Hand information</h3>
+    <p>
+      The context uses shared bridge facts from <code>model.py</code>, including
+      the hand profile, seat, and auction calls. <code>deals.py</code> supplies
+      profiles from card hands; when cards are available, it can provide
+      per-suit HCP as well as total HCP and shape. A rule requiring information
+      that a supplied profile does not contain fails explicitly rather than
+      guessing.
+    </p>
+
+    <h3>Helping with a partial auction</h3>
+    <p>
+      <code>auction_assistant.py</code> asks the system what hand conditions
+      would explain each observed call by a partner or opponent.
+      <code>dealer_call_condition()</code> turns rule conditions into Dealer
+      expressions, allowing the assistant to generate deals compatible with
+      the auction. If a call conflicts with the configured agreement, the
+      assistant reports the inconsistency.
+    </p>
+
+    <h3>Handling an undefined situation</h3>
+    <p>
+      <code>model_assistant.py</code> loads the same system and checks whether
+      the current position has a defined call. It uses the system's call when
+      one exists; when the system explicitly reports out of book, it can rate
+      legal alternatives using generated deals and double-dummy results. This
+      is a separate recommendation workflow, not an extra bidding rule inside
+      <code>systems.py</code>.
+    </p>
+
+    <h2>What this file does not do</h2>
+    <p>
+      <code>systems.py</code> does not generate deals, run the auction to
+      completion, score contracts, or decide which call is strategically best
+      outside the agreements it loads. It interprets configured rules and
+      selects a legal action; the surrounding auction and assistant code owns
+      those other tasks.
+    </p>
+
+    <h2>Code reference</h2>
+    <p class="refs">
+      <code>bridge_sim/systems.py</code>: condition evaluation and Dealer
+      translation (<code>DecisionContext</code>, line 28;
+      <code>RuleCondition.matches()</code>, line 67;
+      <code>RuleCondition.dealer_expression()</code>, line 143;
+      <code>BiddingRule.decide()</code>, line 232;
+      <code>BiddingModule.choose()</code>, line 277;
+      <code>CompositeBiddingSystem.choose_call()</code>, line 322;
+      <code>CompositeBiddingSystem.dealer_call_condition()</code>, line 344);
+      loading (<code>load_system()</code>, line 358;
+      <code>load_module()</code>, line 372;
+      <code>_load_composite_system()</code>, line 396;
+      <code>_parse_rule()</code>, line 548;
+      <code>_parse_condition()</code>, line 587); public-call compatibility
+      (<code>_dealer_call_condition()</code>, line 780).
+      Connections: <code>bridge_sim/auction.py</code> —
+      <code>run_auction()</code>; <code>bridge_sim/auction_assistant.py</code> —
+      <code>generate_dealer_script()</code>;
+      <code>bridge_sim/model_assistant.py</code> —
+      <code>run_model_assistant()</code>.
+    </p>
+  </section>
+</body>
+</html>

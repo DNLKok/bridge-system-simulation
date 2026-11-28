@@ -49,6 +49,17 @@ cards to the 2/3/4/5 level, and prefers the longest qualifying suit, breaking
 ties using the S-H-D-C order declared in the module TOML. Hand profiles from
 cards include per-suit HCP; a
 profile-only hand without per-suit HCP cannot evaluate a rule that requires it.
+The [simple overcalls module](systems/modules/simple-overcalls.toml) handles
+1C-2S suit openings, including calls that may be artificial in a particular
+opponent system. Its standalone system is in
+[systems/simple-overcalls.toml](systems/simple-overcalls.toml); in a composed
+system, place specialized opening-response modules before it so they can take
+priority. The module chooses the longest qualifying non-jump suit overcall,
+then prefers S-H-D-C. Suit overcalls show 5+ cards; they require 9+ HCP at the
+1-level, 12+ with five cards or 10+ with six at the 2-level, and 13+ with five
+cards or 11+ with six at the 3-level, with a 17-HCP maximum. It also defines
+balanced notrump overcalls/doubles and takeout doubles. Card-derived profiles
+include the suit-honor details needed to evaluate stopper rules.
 If `run_auction` encounters an out-of-book decision, it raises a clear error
 instead of silently inventing a call; provide that auction context to the
 model-assistant command to get a rated recommendation.

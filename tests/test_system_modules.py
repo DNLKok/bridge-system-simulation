@@ -8,6 +8,7 @@ from bridge_sim import (
     Call,
     DecisionContext,
     Denomination,
+    DoubleCall,
     HandProfile,
     OutOfBookDecision,
     PassCall,
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ONE_NT_MODULE = ROOT / "systems" / "modules" / "open-1nt-balanced-15-17.toml"
 PASSOUT_SYSTEM = ROOT / "systems" / "passout-cheapest-call.toml"
 PREEMPT_SYSTEM = ROOT / "systems" / "traditional-preempts.toml"
+SIMPLE_OVERCALL_SYSTEM = ROOT / "systems" / "simple-overcalls.toml"
 
 
 def context(
@@ -125,6 +127,24 @@ def _preempt_legal_calls() -> frozenset[Call]:
     ):
         calls.update(Bid(level, denomination) for denomination in denominations)
     return frozenset(calls)
+
+
+def _simple_overcall_context(
+    hand: HandProfile,
+    opening: Bid,
+) -> DecisionContext:
+    auction = (AuctionEntry(Seat.NORTH, opening),)
+    legal_calls = {
+        PassCall.PASS,
+        DoubleCall.DOUBLE,
+        *(
+            Bid(level, denomination)
+            for level in range(1, 8)
+            for denomination in Denomination
+            if Bid(level, denomination).order > opening.order
+        ),
+    }
+    return context(hand, auction, frozenset(legal_calls), Seat.EAST)
 
 
 class BiddingModuleTests(unittest.TestCase):
@@ -472,6 +492,255 @@ path = "module.toml"
                     Seat.NORTH,
                 )
             )
+
+    def test_simple_overcalls_use_each_level_and_longest_qualifying_suit(self) -> None:
+        system = load_system(SIMPLE_OVERCALL_SYSTEM)
+        cases = (
+            (
+                HandProfile(9, (5, 3, 3, 2)),
+                Bid(1, Denomination.CLUBS),
+                Bid(1, Denomination.SPADES),
+            ),
+            (
+                HandProfile(12, (5, 3, 3, 2)),
+                Bid(2, Denomination.CLUBS),
+                Bid(2, Denomination.SPADES),
+            ),
+            (
+                HandProfile(10, (6, 3, 2, 2)),
+                Bid(2, Denomination.CLUBS),
+                Bid(2, Denomination.SPADES),
+            ),
+            (
+                HandProfile(13, (2, 4, 2, 5)),
+                Bid(2, Denomination.SPADES),
+                Bid(3, Denomination.CLUBS),
+            ),
+            (
+                HandProfile(11, (3, 2, 2, 6)),
+                Bid(2, Denomination.SPADES),
+                Bid(3, Denomination.CLUBS),
+            ),
+            (
+                HandProfile(11, (5, 1, 1, 6)),
+                Bid(1, Denomination.HEARTS),
+                Bid(2, Denomination.CLUBS),
+            ),
+            (
+                HandProfile(9, (5, 5, 2, 1)),
+                Bid(1, Denomination.CLUBS),
+                Bid(1, Denomination.SPADES),
+            ),
+        )
+        for hand, opening, expected in cases:
+            with self.subTest(opening=opening, shape=hand.shape, hcp=hand.hcp):
+                self.assertEqual(
+                    system.choose_call(_simple_overcall_context(hand, opening)),
+                    expected,
+                )
+
+    def test_simple_overcalls_enforce_strength_caps_and_tier_boundaries(self) -> None:
+        system = load_system(SIMPLE_OVERCALL_SYSTEM)
+        cases = (
+            (HandProfile(11, (5, 3, 3, 2)), Bid(2, Denomination.CLUBS)),
+            (HandProfile(9, (6, 3, 2, 2)), Bid(2, Denomination.CLUBS)),
+            (HandProfile(10, (5, 4, 2, 2)), Bid(2, Denomination.SPADES)),
+            (HandProfile(18, (6, 3, 2, 2)), Bid(1, Denomination.HEARTS)),
+        )
+        for hand, opening in cases:
+            with self.subTest(opening=opening, shape=hand.shape, hcp=hand.hcp):
+                self.assertIs(
+                    system.choose_call(_simple_overcall_context(hand, opening)),
+                    PassCall.PASS,
+                )
+
+    def test_balanced_overcalls_use_opening_level_stoppers_and_strength(self) -> None:
+        system = load_system(SIMPLE_OVERCALL_SYSTEM)
+        balanced_minor = HandProfile(15, (5, 3, 3, 2))
+        balanced_major_no_stop_with_long_suit = HandProfile(
+            15,
+            (5, 3, 3, 2),
+            (7, 1, 7, 0),
+            ("AK", "J", "AK", ""),
+        )
+        heart_stopper = HandProfile(
+            15,
+            (4, 3, 3, 3),
+            (7, 3, 4, 1),
+            ("AK", "QJ", "A", "J"),
+        )
+        no_heart_stopper = HandProfile(
+            15,
+            (4, 3, 3, 3),
+            (7, 1, 7, 0),
+            ("AK", "J", "AK", ""),
+        )
+        two_level_jack_stopper = HandProfile(
+            16,
+            (4, 4, 3, 2),
+            (7, 1, 7, 1),
+            ("AK", "J", "AK", "J"),
+        )
+        no_two_level_stopper = HandProfile(
+            16,
+            (4, 4, 3, 2),
+            (7, 0, 7, 2),
+            ("AK", "", "AK", "Q"),
+        )
+        strong_balanced = HandProfile(19, (4, 3, 3, 3))
+
+        expectations = (
+            (balanced_minor, Bid(1, Denomination.CLUBS), Bid(1, Denomination.NOTRUMP)),
+            (heart_stopper, Bid(1, Denomination.HEARTS), Bid(1, Denomination.NOTRUMP)),
+            (no_heart_stopper, Bid(1, Denomination.HEARTS), DoubleCall.DOUBLE),
+            (
+                balanced_major_no_stop_with_long_suit,
+                Bid(1, Denomination.HEARTS),
+                DoubleCall.DOUBLE,
+            ),
+            (
+                two_level_jack_stopper,
+                Bid(2, Denomination.HEARTS),
+                Bid(2, Denomination.NOTRUMP),
+            ),
+            (no_two_level_stopper, Bid(2, Denomination.HEARTS), DoubleCall.DOUBLE),
+            (strong_balanced, Bid(1, Denomination.SPADES), DoubleCall.DOUBLE),
+        )
+        for hand, opening, expected in expectations:
+            with self.subTest(opening=opening, hcp=hand.hcp):
+                self.assertEqual(
+                    system.choose_call(_simple_overcall_context(hand, opening)),
+                    expected,
+                )
+
+    def test_major_stopper_rules_require_honor_profile(self) -> None:
+        system = load_system(SIMPLE_OVERCALL_SYSTEM)
+        with self.assertRaisesRegex(ValueError, "suit honors"):
+            system.choose_call(
+                _simple_overcall_context(
+                    HandProfile(15, (4, 3, 3, 3)),
+                    Bid(1, Denomination.HEARTS),
+                )
+            )
+
+    def test_simple_takeout_doubles_apply_the_minor_and_major_shapes(self) -> None:
+        system = load_system(SIMPLE_OVERCALL_SYSTEM)
+        cases = (
+            (
+                HandProfile(12, (4, 3, 3, 3)),
+                Bid(1, Denomination.CLUBS),
+                DoubleCall.DOUBLE,
+            ),
+            (
+                HandProfile(12, (5, 3, 3, 2)),
+                Bid(1, Denomination.CLUBS),
+                Bid(1, Denomination.SPADES),
+            ),
+            (
+                HandProfile(12, (4, 3, 3, 3)),
+                Bid(1, Denomination.DIAMONDS),
+                DoubleCall.DOUBLE,
+            ),
+            (
+                HandProfile(10, (4, 3, 1, 5)),
+                Bid(2, Denomination.DIAMONDS),
+                DoubleCall.DOUBLE,
+            ),
+            (
+                HandProfile(12, (4, 2, 4, 3)),
+                Bid(1, Denomination.HEARTS),
+                DoubleCall.DOUBLE,
+            ),
+            (
+                HandProfile(10, (4, 1, 4, 4)),
+                Bid(2, Denomination.HEARTS),
+                DoubleCall.DOUBLE,
+            ),
+        )
+        for hand, opening, expected in cases:
+            with self.subTest(opening=opening, shape=hand.shape, hcp=hand.hcp):
+                self.assertEqual(
+                    system.choose_call(_simple_overcall_context(hand, opening)),
+                    expected,
+                )
+
+    def test_major_takeout_double_requires_exactly_four_in_other_major(self) -> None:
+        system = load_system(SIMPLE_OVERCALL_SYSTEM)
+        hand = HandProfile(10, (5, 2, 3, 3))
+        self.assertIs(
+            system.choose_call(
+                _simple_overcall_context(hand, Bid(2, Denomination.HEARTS))
+            ),
+            PassCall.PASS,
+        )
+
+    def test_simple_overcalls_only_apply_to_the_immediate_opponent_opening(self) -> None:
+        system = load_system(SIMPLE_OVERCALL_SYSTEM)
+        hand = HandProfile(12, (4, 3, 3, 3))
+        wrong_auction = (
+            AuctionEntry(Seat.NORTH, Bid(1, Denomination.CLUBS)),
+            AuctionEntry(Seat.EAST, PassCall.PASS),
+            AuctionEntry(Seat.SOUTH, Bid(1, Denomination.HEARTS)),
+        )
+        decision = system.choose_call(
+            context(
+                hand,
+                wrong_auction,
+                frozenset({PassCall.PASS, DoubleCall.DOUBLE}),
+                Seat.WEST,
+            )
+        )
+        self.assertIs(decision, PassCall.PASS)
+
+    def test_higher_priority_module_can_handle_artificial_eligible_opening(self) -> None:
+        special_module = """\
+schema_version = 1
+kind = "module"
+id = "special-2c-response"
+version = "1.0.0"
+name = "Special 2C response"
+
+[[rules]]
+id = "special-response"
+call = "2D"
+
+[rules.when]
+min_hcp = 0
+"""
+        manifest = f"""\
+schema_version = 1
+kind = "system"
+id = "combined-overcalls"
+version = "1.0.0"
+name = "Special response before simple overcalls"
+on_no_match = "PASS"
+
+[[modules]]
+id = "special-2c-response"
+version = "1.0.0"
+path = "special.toml"
+
+[[modules]]
+id = "simple-overcalls"
+version = "1.0.0"
+path = "{ROOT / 'systems/modules/simple-overcalls.toml'}"
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "special.toml").write_text(special_module, encoding="utf-8")
+            system_path = path / "system.toml"
+            system_path.write_text(manifest, encoding="utf-8")
+            system = load_system(system_path)
+
+        self.assertEqual(
+            system.choose_call(
+                _simple_overcall_context(
+                    HandProfile(10, (6, 3, 2, 2)),
+                    Bid(2, Denomination.CLUBS),
+                )
+            ),
+            Bid(2, Denomination.DIAMONDS),
+        )
 
 
 if __name__ == "__main__":

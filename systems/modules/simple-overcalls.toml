@@ -1,0 +1,276 @@
+schema_version = 1
+kind = "module"
+id = "simple-overcalls"
+version = "1.0.0"
+name = "Simple natural overcalls"
+opponent_opening_calls = ["1C", "1D", "1H", "1S", "2C", "2D", "2H", "2S"]
+
+[[rules]]
+id = "balanced-1nt-over-minor"
+call = "1NT"
+
+[rules.when]
+opponent_opening_calls = ["1C", "1D"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 15
+max_hcp = 18
+
+[[rules]]
+id = "balanced-1nt-over-major-with-stopper"
+call = "1NT"
+
+[rules.when]
+opponent_opening_calls = ["1H"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 15
+max_hcp = 18
+stopper_suit = "hearts"
+has_stopper = true
+
+[[rules]]
+id = "balanced-double-over-major-without-stopper"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1H"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 15
+max_hcp = 18
+stopper_suit = "hearts"
+has_stopper = false
+
+[[rules]]
+id = "balanced-2nt-over-minor"
+call = "2NT"
+
+[rules.when]
+opponent_opening_calls = ["2C", "2D"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 16
+max_hcp = 19
+
+[[rules]]
+id = "balanced-2nt-over-major-with-stopper"
+call = "2NT"
+
+[rules.when]
+opponent_opening_calls = ["2H"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 16
+max_hcp = 19
+stopper_suit = "hearts"
+has_stopper = true
+
+[[rules]]
+id = "balanced-double-over-major-without-stopper-at-two-level"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["2H"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 16
+max_hcp = 19
+stopper_suit = "hearts"
+has_stopper = false
+
+[[rules]]
+id = "balanced-double-over-spades-with-stopper-check"
+call = "1NT"
+
+[rules.when]
+opponent_opening_calls = ["1S"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 15
+max_hcp = 18
+stopper_suit = "spades"
+has_stopper = true
+
+[[rules]]
+id = "balanced-double-over-spades-without-stopper"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1S"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 15
+max_hcp = 18
+stopper_suit = "spades"
+has_stopper = false
+
+[[rules]]
+id = "balanced-2nt-over-spades-with-stopper"
+call = "2NT"
+
+[rules.when]
+opponent_opening_calls = ["2S"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 16
+max_hcp = 19
+stopper_suit = "spades"
+has_stopper = true
+
+[[rules]]
+id = "balanced-double-over-spades-without-stopper-at-two-level"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["2S"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 16
+max_hcp = 19
+stopper_suit = "spades"
+has_stopper = false
+
+[[rules]]
+id = "stronger-balanced-double-over-one-level-opening"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1C", "1D", "1H", "1S"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 19
+
+[[rules]]
+id = "stronger-balanced-double-over-two-level-opening"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["2C", "2D", "2H", "2S"]
+shapes = ["4333", "4432", "5332"]
+min_hcp = 20
+
+[[rules]]
+id = "nonjump-new-suit-overcall"
+try_calls = [
+  "1S", "1H", "1D", "1C",
+  "2S", "2H", "2D", "2C",
+  "3S", "3H", "3D", "3C",
+]
+
+[rules.when]
+opponent_opening_calls = ["1C", "1D", "1H", "1S", "2C", "2D", "2H", "2S"]
+max_hcp = 17
+nonjump_new_suit_overcall = true
+suit_tie_order = ["spades", "hearts", "diamonds", "clubs"]
+suit_overcall_tiers = [
+  { level = 1, min_hcp = 9, min_suit_length = 5 },
+  { level = 2, min_hcp = 12, min_suit_length = 5 },
+  { level = 2, min_hcp = 10, min_suit_length = 6 },
+  { level = 3, min_hcp = 13, min_suit_length = 5 },
+  { level = 3, min_hcp = 11, min_suit_length = 6 },
+]
+
+[[rules]]
+id = "takeout-double-with-19-plus-hcp"
+call = "X"
+
+[rules.when]
+min_hcp = 19
+
+[[rules]]
+id = "minor-takeout-double-12-plus-spades-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1C", "2C"]
+min_hcp = 12
+suit_lengths = { clubs = { max = 3 }, spades = { min = 4 }, hearts = { min = 3 } }
+
+[[rules]]
+id = "minor-takeout-double-12-plus-hearts-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1C", "2C"]
+min_hcp = 12
+suit_lengths = { clubs = { max = 3 }, hearts = { min = 4 }, spades = { min = 3 } }
+
+[[rules]]
+id = "minor-takeout-double-10-plus-short-minor-spades-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1C", "2C"]
+min_hcp = 10
+suit_lengths = { clubs = { max = 1 }, spades = { min = 4 }, hearts = { min = 3 } }
+
+[[rules]]
+id = "minor-takeout-double-10-plus-short-minor-hearts-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1C", "2C"]
+min_hcp = 10
+suit_lengths = { clubs = { max = 1 }, hearts = { min = 4 }, spades = { min = 3 } }
+
+[[rules]]
+id = "diamond-takeout-double-12-plus-spades-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1D", "2D"]
+min_hcp = 12
+suit_lengths = { diamonds = { max = 3 }, spades = { min = 4 }, hearts = { min = 3 } }
+
+[[rules]]
+id = "diamond-takeout-double-12-plus-hearts-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1D", "2D"]
+min_hcp = 12
+suit_lengths = { diamonds = { max = 3 }, hearts = { min = 4 }, spades = { min = 3 } }
+
+[[rules]]
+id = "diamond-takeout-double-10-plus-short-minor-spades-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1D", "2D"]
+min_hcp = 10
+suit_lengths = { diamonds = { max = 1 }, spades = { min = 4 }, hearts = { min = 3 } }
+
+[[rules]]
+id = "diamond-takeout-double-10-plus-short-minor-hearts-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1D", "2D"]
+min_hcp = 10
+suit_lengths = { diamonds = { max = 1 }, hearts = { min = 4 }, spades = { min = 3 } }
+
+[[rules]]
+id = "heart-takeout-double-12-plus-spade-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1H", "2H"]
+min_hcp = 12
+suit_lengths = { hearts = { max = 2 }, spades = { min = 4, max = 4 } }
+
+[[rules]]
+id = "heart-takeout-double-10-plus-short-heart-spade-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1H", "2H"]
+min_hcp = 10
+suit_lengths = { hearts = { max = 1 }, spades = { min = 4, max = 4 } }
+
+[[rules]]
+id = "spade-takeout-double-12-plus-heart-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1S", "2S"]
+min_hcp = 12
+suit_lengths = { spades = { max = 2 }, hearts = { min = 4, max = 4 } }
+
+[[rules]]
+id = "spade-takeout-double-10-plus-short-spade-heart-four-plus"
+call = "X"
+
+[rules.when]
+opponent_opening_calls = ["1S", "2S"]
+min_hcp = 10
+suit_lengths = { spades = { max = 1 }, hearts = { min = 4, max = 4 } }
