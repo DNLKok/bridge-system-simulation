@@ -1644,6 +1644,13 @@ def _jump_to_game_in_gf(context: DecisionContext) -> Call | None:
     if context.game_reached:
         return PassCall.PASS if PassCall.PASS in context.legal_calls else None
 
+    game_calls = [
+        Bid(3, Denomination.NOTRUMP),
+        Bid(4, Denomination.HEARTS),
+        Bid(4, Denomination.SPADES),
+        Bid(5, Denomination.CLUBS),
+        Bid(5, Denomination.DIAMONDS),
+    ]
     game_calls_by_suit = {
         Denomination.HEARTS: Bid(4, Denomination.HEARTS),
         Denomination.SPADES: Bid(4, Denomination.SPADES),
@@ -1661,10 +1668,16 @@ def _jump_to_game_in_gf(context: DecisionContext) -> Call | None:
         )
     else:
         candidates = [Bid(3, Denomination.NOTRUMP)]
-    return next(
-        (call for call in candidates if call in context.legal_calls),
-        PassCall.PASS if PassCall.PASS in context.legal_calls else None,
-    )
+    legal_candidates = [
+        call for call in candidates if call in context.legal_calls
+    ]
+    if not legal_candidates:
+        legal_candidates = [
+            call for call in game_calls if call in context.legal_calls
+        ]
+    if legal_candidates:
+        return legal_candidates[0]
+    return PassCall.PASS if PassCall.PASS in context.legal_calls else None
 
 
 def _is_game_bid(call: Bid) -> bool:

@@ -72,7 +72,9 @@ specified transfers and relays are handled directly; after 2♠, responder shows
 the cheapest legal diamond/heart/spade shortage, or bids 3NT with GF and 4♣
 with slam interest when without shortage. The opener's choices after 3♦, 3♥,
 and 3♠ are evaluated with sampled deals and double-dummy scores against par.
-Continuations after 2♣, 2♦, and 2♥ remain to be specified.
+After 2♥ and 2♦, the opener's major-suit fit responses and the responder's
+continuations are specified, with game choices evaluated by simulation.
+Continuations after 2♣ remain to be specified.
 
 Modules can also declare public auction signals with `public_signals`. These
 signals attach a confirmed fit or game force to an auction pattern, independent
