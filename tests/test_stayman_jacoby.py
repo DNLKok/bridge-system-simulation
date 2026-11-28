@@ -109,6 +109,7 @@ class StaymanJacobyTests(unittest.TestCase):
         cases = (
             (9, (6, 2, 3, 2), Bid(4, Denomination.HEARTS)),
             (9, (2, 6, 3, 2), Bid(4, Denomination.DIAMONDS)),
+            (9, (1, 1, 5, 6), Bid(2, Denomination.SPADES)),
             (9, (1, 3, 5, 4), Bid(3, Denomination.SPADES)),
             (9, (1, 3, 4, 5), Bid(3, Denomination.SPADES)),
             (9, (3, 1, 5, 4), Bid(3, Denomination.HEARTS)),

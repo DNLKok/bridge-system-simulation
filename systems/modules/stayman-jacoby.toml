@@ -414,6 +414,16 @@ min_suit_length = 6
 max_outside_major_length = 3
 
 [[rules]]
+id = "2s-with-six-card-clubs"
+call = "2S"
+
+[rules.when]
+after_opening_calls = ["PASS"]
+suit = "clubs"
+min_suit_length = 6
+max_outside_major_length = 3
+
+[[rules]]
 id = "3nt-gf-without-four-card-major"
 call = "3NT"
 
@@ -448,16 +458,6 @@ call = "2NT"
 after_opening_calls = ["PASS"]
 strengths = ["Invitational"]
 shapes = ["4333"]
-
-[[rules]]
-id = "2s-with-six-card-clubs"
-call = "2S"
-
-[rules.when]
-after_opening_calls = ["PASS"]
-suit = "clubs"
-min_suit_length = 6
-max_outside_major_length = 3
 
 [[rules]]
 id = "2c-weak-with-four-card-majors-and-diamond-short-clubs"
