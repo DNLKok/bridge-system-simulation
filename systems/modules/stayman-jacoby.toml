@@ -1,0 +1,235 @@
+schema_version = 1
+kind = "module"
+id = "stayman-jacoby"
+version = "1.0.0"
+name = "Stayman-Jacoby"
+
+partner_opening_calls = ["1NT"]
+uncontested_partner_opening = true
+
+[strength_ranges]
+"Slam interest" = { min_hcp = 15 }
+GF = { min_hcp = 9, max_hcp = 14 }
+Invitational = { min_hcp = 8, max_hcp = 8 }
+Weak = { min_hcp = 0, max_hcp = 7 }
+
+[[rules]]
+id = "4h-transfer-to-spades"
+call = "4H"
+
+[rules.when]
+strengths = ["GF"]
+suit = "spades"
+min_suit_length = 6
+
+[[rules]]
+id = "4d-transfer-to-hearts"
+call = "4D"
+
+[rules.when]
+strengths = ["GF"]
+suit = "hearts"
+min_suit_length = 6
+
+[[rules]]
+id = "3s-with-1-3-5-4"
+call = "3S"
+
+[rules.when]
+strengths = ["GF"]
+
+[rules.when.suit_lengths.spades]
+min = 1
+max = 1
+
+[rules.when.suit_lengths.hearts]
+min = 3
+max = 3
+
+[rules.when.suit_lengths.diamonds]
+min = 5
+max = 5
+
+[rules.when.suit_lengths.clubs]
+min = 4
+max = 4
+
+[[rules]]
+id = "3s-with-1-3-4-5"
+call = "3S"
+
+[rules.when]
+strengths = ["GF"]
+
+[rules.when.suit_lengths.spades]
+min = 1
+max = 1
+
+[rules.when.suit_lengths.hearts]
+min = 3
+max = 3
+
+[rules.when.suit_lengths.diamonds]
+min = 4
+max = 4
+
+[rules.when.suit_lengths.clubs]
+min = 5
+max = 5
+
+[[rules]]
+id = "3h-with-3-1-5-4"
+call = "3H"
+
+[rules.when]
+strengths = ["GF"]
+
+[rules.when.suit_lengths.spades]
+min = 3
+max = 3
+
+[rules.when.suit_lengths.hearts]
+min = 1
+max = 1
+
+[rules.when.suit_lengths.diamonds]
+min = 5
+max = 5
+
+[rules.when.suit_lengths.clubs]
+min = 4
+max = 4
+
+[[rules]]
+id = "3h-with-3-1-4-5"
+call = "3H"
+
+[rules.when]
+strengths = ["GF"]
+
+[rules.when.suit_lengths.spades]
+min = 3
+max = 3
+
+[rules.when.suit_lengths.hearts]
+min = 1
+max = 1
+
+[rules.when.suit_lengths.diamonds]
+min = 4
+max = 4
+
+[rules.when.suit_lengths.clubs]
+min = 5
+max = 5
+
+[[rules]]
+id = "3d-invitational-with-six-card-diamonds"
+call = "3D"
+
+[rules.when]
+strengths = ["Invitational"]
+suit = "diamonds"
+min_suit_length = 6
+max_outside_major_length = 3
+
+[[rules]]
+id = "3c-weak-gf-or-slam-interest-with-six-card-diamonds"
+call = "3C"
+
+[rules.when]
+strengths = ["Weak", "GF", "Slam interest"]
+suit = "diamonds"
+min_suit_length = 6
+max_outside_major_length = 3
+
+[[rules]]
+id = "3nt-gf-without-four-card-major"
+call = "3NT"
+
+[rules.when]
+strengths = ["GF"]
+suit_lengths = { spades = { max = 3 }, hearts = { max = 3 } }
+
+[[rules]]
+id = "3nt-gf-with-4333-shape"
+call = "3NT"
+
+[rules.when]
+strengths = ["GF"]
+shapes = ["4333"]
+
+[[rules]]
+id = "2nt-invitational-without-four-card-major"
+call = "2NT"
+
+[rules.when]
+strengths = ["Invitational"]
+suit_lengths = { spades = { max = 3 }, hearts = { max = 3 } }
+
+[[rules]]
+id = "2nt-invitational-with-4333-shape"
+call = "2NT"
+
+[rules.when]
+strengths = ["Invitational"]
+shapes = ["4333"]
+
+[[rules]]
+id = "2s-with-six-card-clubs"
+call = "2S"
+
+[rules.when]
+suit = "clubs"
+min_suit_length = 6
+max_outside_major_length = 3
+
+[[rules]]
+id = "2c-invitational-gf-or-slam-interest-with-four-card-spades"
+call = "2C"
+
+[rules.when]
+strengths = ["Invitational", "GF", "Slam interest"]
+suit = "spades"
+min_suit_length = 4
+
+[[rules]]
+id = "2c-invitational-gf-or-slam-interest-with-four-card-hearts"
+call = "2C"
+
+[rules.when]
+strengths = ["Invitational", "GF", "Slam interest"]
+suit = "hearts"
+min_suit_length = 4
+
+[[rules]]
+id = "2c-weak-with-five-spades-and-four-hearts"
+call = "2C"
+
+[rules.when]
+strengths = ["Weak"]
+suit_lengths = { spades = { min = 5 }, hearts = { min = 4 } }
+
+[[rules]]
+id = "2c-weak-with-four-spades-and-five-hearts"
+call = "2C"
+
+[rules.when]
+strengths = ["Weak"]
+suit_lengths = { spades = { min = 4 }, hearts = { min = 5 } }
+
+[[rules]]
+id = "2h-with-five-card-spades"
+call = "2H"
+
+[rules.when]
+suit = "spades"
+min_suit_length = 5
+
+[[rules]]
+id = "2d-with-five-card-hearts"
+call = "2D"
+
+[rules.when]
+suit = "hearts"
+min_suit_length = 5

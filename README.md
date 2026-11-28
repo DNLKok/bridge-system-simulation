@@ -65,6 +65,10 @@ when HCP plus the lengths of the two longest suits total at least 20, then
 handles balanced notrump and strong openings before choosing a longest-suit
 1-level opening. Its standalone system is
 [systems/standard-openings.toml](systems/standard-openings.toml).
+The initial [Stayman-Jacoby module](systems/modules/stayman-jacoby.toml) applies
+on responder's first turn after partner opens 1NT, provided no non-pass call
+has intervened. It declares its reusable HCP ranges at the top: Weak 0-7,
+Invitational 8, GF 9-14, and Slam interest 15+.
 
 ## Standard bidding-system test
 

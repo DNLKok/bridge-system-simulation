@@ -54,6 +54,7 @@ class DealerCallCondition:
 class RuleCondition:
     min_hcp: int | None = None
     max_hcp: int | None = None
+    hcp_ranges: tuple[tuple[int | None, int | None], ...] = ()
     min_rule_of_20: int | None = None
     shapes: frozenset[tuple[int, int, int, int]] | None = None
     passout_seat: bool | None = None
@@ -81,6 +82,12 @@ class RuleCondition:
         if self.min_hcp is not None and context.hand.hcp < self.min_hcp:
             return False
         if self.max_hcp is not None and context.hand.hcp > self.max_hcp:
+            return False
+        if self.hcp_ranges and not any(
+            (minimum is None or context.hand.hcp >= minimum)
+            and (maximum is None or context.hand.hcp <= maximum)
+            for minimum, maximum in self.hcp_ranges
+        ):
             return False
         if self.min_rule_of_20 is not None:
             top_two_suits = sorted(context.hand.shape, reverse=True)[:2]
@@ -185,6 +192,16 @@ class RuleCondition:
             expressions.append(f"(hcp({seat_name}) >= {self.min_hcp})")
         if self.max_hcp is not None:
             expressions.append(f"(hcp({seat_name}) <= {self.max_hcp})")
+        if self.hcp_ranges:
+            range_expressions: list[str] = []
+            for minimum, maximum in self.hcp_ranges:
+                bounds = []
+                if minimum is not None:
+                    bounds.append(f"(hcp({seat_name}) >= {minimum})")
+                if maximum is not None:
+                    bounds.append(f"(hcp({seat_name}) <= {maximum})")
+                range_expressions.append("(" + " && ".join(bounds) + ")")
+            expressions.append("(" + " || ".join(range_expressions) + ")")
         if self.min_rule_of_20 is not None:
             expressions.append(
                 "("
@@ -506,9 +523,11 @@ class BiddingModule:
     name: str
     rules: tuple[BiddingRule, ...]
     opponent_opening_calls: frozenset[Bid] | None = None
+    partner_opening_calls: frozenset[Bid] | None = None
+    uncontested_partner_opening: bool = False
 
     def choose(self, context: DecisionContext) -> ModuleDecision | None:
-        if not _matches_opponent_opening(context, self.opponent_opening_calls):
+        if not _matches_module_opening(context, self):
             return None
         for rule in self.rules:
             decision = rule.decide(context, self.module_id)
@@ -521,7 +540,7 @@ class BiddingModule:
         context: DecisionContext,
         observed_call: Call,
     ) -> DealerCallCondition:
-        if not _matches_opponent_opening(context, self.opponent_opening_calls):
+        if not _matches_module_opening(context, self):
             return DealerCallCondition()
         expressions: list[str] = []
         for rule in self.rules:
@@ -615,9 +634,13 @@ def load_module(path: str | Path) -> BiddingModule:
     if config.get("schema_version") != 1 or config.get("kind") != "module":
         raise ValueError(f"Unsupported module schema in {module_path}.")
     module_keys = {"schema_version", "kind", "id", "version", "name", "rules"}
-    expected_keys = module_keys
-    if "opponent_opening_calls" in config:
-        expected_keys = module_keys | {"opponent_opening_calls"}
+    optional_keys = {
+        "opponent_opening_calls",
+        "partner_opening_calls",
+        "uncontested_partner_opening",
+        "strength_ranges",
+    }
+    expected_keys = module_keys | (optional_keys & set(config))
     _require_keys(config, expected_keys, f"module file {module_path}")
     module_id, version, name = _validate_metadata(config)
     opening_calls = (
@@ -625,14 +648,38 @@ def load_module(path: str | Path) -> BiddingModule:
         if "opponent_opening_calls" in config
         else None
     )
+    partner_opening_calls = (
+        _parse_partner_opening_calls(config["partner_opening_calls"])
+        if "partner_opening_calls" in config
+        else None
+    )
+    uncontested_partner_opening = config.get("uncontested_partner_opening", False)
+    if not isinstance(uncontested_partner_opening, bool):
+        raise ValueError("uncontested_partner_opening must be a boolean.")
+    if uncontested_partner_opening and partner_opening_calls is None:
+        raise ValueError(
+            "uncontested_partner_opening requires partner_opening_calls."
+        )
+    strength_ranges = _parse_strength_ranges(config.get("strength_ranges"))
     raw_rules = config["rules"]
     if not isinstance(raw_rules, list) or not raw_rules:
         raise ValueError("A module must define at least one rule.")
-    rules = tuple(_parse_rule(rule, index) for index, rule in enumerate(raw_rules))
+    rules = tuple(
+        _parse_rule(rule, index, strength_ranges)
+        for index, rule in enumerate(raw_rules)
+    )
     rule_ids = [rule.rule_id for rule in rules]
     if len(set(rule_ids)) != len(rule_ids):
         raise ValueError(f"Module {module_id!r} defines duplicate rule IDs.")
-    return BiddingModule(module_id, version, name, rules, opening_calls)
+    return BiddingModule(
+        module_id,
+        version,
+        name,
+        rules,
+        opening_calls,
+        partner_opening_calls,
+        uncontested_partner_opening,
+    )
 
 
 def _load_composite_system(
@@ -787,7 +834,11 @@ def _legacy_system(
     )
 
 
-def _parse_rule(value: object, index: int) -> BiddingRule:
+def _parse_rule(
+    value: object,
+    index: int,
+    strength_ranges: dict[str, tuple[int | None, int | None]],
+) -> BiddingRule:
     if not isinstance(value, dict):
         raise ValueError(f"Module rule {index} must be a TOML table.")
     required = {"id", "when"}
@@ -810,7 +861,7 @@ def _parse_rule(value: object, index: int) -> BiddingRule:
     if not isinstance(rule_id, str) or not rule_id.strip():
         raise ValueError(f"Module rule {index} id must be a non-empty string.")
     raw_condition = value["when"]
-    condition = _parse_condition(raw_condition, index)
+    condition = _parse_condition(raw_condition, index, strength_ranges)
     if "call" in value:
         preferred_calls = (_parse_call(value["call"]),)
     else:
@@ -843,12 +894,17 @@ def _parse_rule(value: object, index: int) -> BiddingRule:
     return BiddingRule(rule_id, condition, preferred_calls, explanation)
 
 
-def _parse_condition(value: object, index: int) -> RuleCondition:
+def _parse_condition(
+    value: object,
+    index: int,
+    strength_ranges: dict[str, tuple[int | None, int | None]],
+) -> RuleCondition:
     if not isinstance(value, dict):
         raise ValueError(f"Module rule {index} when must be a TOML table.")
     allowed = {
         "min_hcp",
         "max_hcp",
+        "strengths",
         "min_rule_of_20",
         "shapes",
         "passout_seat",
@@ -883,6 +939,11 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
             value.get("min_hcp"),
             value.get("max_hcp"),
         )
+    hcp_ranges = _parse_strength_references(
+        value.get("strengths"),
+        strength_ranges,
+        index,
+    )
     min_rule_of_20 = _parse_integer_condition(
         value,
         "min_rule_of_20",
@@ -1012,6 +1073,7 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
     return RuleCondition(
         min_hcp=min_hcp,
         max_hcp=max_hcp,
+        hcp_ranges=hcp_ranges,
         min_rule_of_20=min_rule_of_20,
         shapes=shapes,
         passout_seat=passout_seat,
@@ -1242,6 +1304,116 @@ def _suit_overcall_dealer_expression(
         if level == call.level
     )
     return "(" + " || ".join(alternatives) + ")"
+
+
+def _parse_strength_references(
+    value: object,
+    strength_ranges: dict[str, tuple[int | None, int | None]],
+    index: int,
+) -> tuple[tuple[int | None, int | None], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"Module rule {index} strengths must be a non-empty array.")
+    if any(
+        not isinstance(name, str) or name not in strength_ranges
+        for name in value
+    ):
+        raise ValueError(
+            f"Module rule {index} strengths must reference ranges declared "
+            "in strength_ranges."
+        )
+    if len(set(value)) != len(value):
+        raise ValueError(f"Module rule {index} strengths must not repeat a range.")
+    return tuple(strength_ranges[name] for name in value)
+
+
+def _parse_strength_ranges(
+    value: object,
+) -> dict[str, tuple[int | None, int | None]]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or not value:
+        raise ValueError("strength_ranges must be a non-empty table.")
+    ranges: dict[str, tuple[int | None, int | None]] = {}
+    for name, bounds in value.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Strength range names must be non-empty strings.")
+        if (
+            not isinstance(bounds, dict)
+            or not bounds
+            or set(bounds) - {"min_hcp", "max_hcp"}
+        ):
+            raise ValueError(
+                f"Strength range {name!r} must define min_hcp and/or max_hcp."
+            )
+        hcp_range = _parse_hcp_range(
+            bounds.get("min_hcp"),
+            bounds.get("max_hcp"),
+        )
+        if hcp_range == (None, None):
+            raise ValueError(
+                f"Strength range {name!r} must have at least one HCP bound."
+            )
+        ranges[name] = hcp_range
+    return ranges
+
+
+def _parse_partner_opening_calls(value: object) -> frozenset[Bid]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("partner_opening_calls must be a non-empty array.")
+    calls = tuple(_parse_call(call) for call in value)
+    if any(not isinstance(call, Bid) for call in calls):
+        raise ValueError("partner_opening_calls must contain contract bids.")
+    opening_calls = tuple(call for call in calls if isinstance(call, Bid))
+    if len(set(opening_calls)) != len(opening_calls):
+        raise ValueError("partner_opening_calls must not repeat a bid.")
+    return frozenset(opening_calls)
+
+
+def _matches_module_opening(
+    context: DecisionContext,
+    module: BiddingModule,
+) -> bool:
+    if not _matches_opponent_opening(context, module.opponent_opening_calls):
+        return False
+    return _matches_partner_opening(
+        context,
+        module.partner_opening_calls,
+        module.uncontested_partner_opening,
+    )
+
+
+def _matches_partner_opening(
+    context: DecisionContext,
+    opening_calls: frozenset[Bid] | None,
+    require_uncontested: bool,
+) -> bool:
+    if opening_calls is None:
+        return True
+    opening_index = next(
+        (
+            index
+            for index, entry in enumerate(context.auction)
+            if entry.call is not PassCall.PASS
+        ),
+        None,
+    )
+    if opening_index is None:
+        return False
+    opening_entry = context.auction[opening_index]
+    if (
+        not isinstance(opening_entry.call, Bid)
+        or opening_entry.call not in opening_calls
+        or opening_entry.seat.next.next is not context.seat
+    ):
+        return False
+    if require_uncontested and any(
+        entry.call is not PassCall.PASS
+        for entry in context.auction[opening_index + 1 :]
+    ):
+        return False
+    return True
 
 
 def _matches_opponent_opening(
