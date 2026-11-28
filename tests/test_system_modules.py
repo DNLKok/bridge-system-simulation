@@ -175,7 +175,12 @@ class BiddingModuleTests(unittest.TestCase):
             (HandProfile(22, (4, 3, 3, 3)), Bid(2, Denomination.CLUBS)),
             (HandProfile(9, (5, 6, 1, 1)), Bid(1, Denomination.HEARTS)),
             (HandProfile(10, (5, 5, 2, 1)), Bid(1, Denomination.SPADES)),
-            (HandProfile(12, (4, 1, 4, 4)), Bid(1, Denomination.DIAMONDS)),
+            (HandProfile(12, (1, 4, 4, 4)), Bid(1, Denomination.DIAMONDS)),
+            (HandProfile(12, (4, 4, 4, 1)), Bid(1, Denomination.DIAMONDS)),
+            (HandProfile(12, (4, 1, 4, 4)), Bid(1, Denomination.CLUBS)),
+            (HandProfile(12, (4, 4, 1, 4)), Bid(1, Denomination.CLUBS)),
+            (HandProfile(11, (1, 4, 4, 4)), PassCall.PASS),
+            (HandProfile(22, (1, 4, 4, 4)), Bid(2, Denomination.CLUBS)),
             (HandProfile(18, (2, 1, 3, 7)), Bid(1, Denomination.CLUBS)),
         )
         for hand, expected in cases:

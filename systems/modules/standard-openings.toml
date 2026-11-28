@@ -58,6 +58,46 @@ max_hcp = 19
 shapes = ["4333", "4432"]
 
 [[rules]]
+id = "open-1d-with-4441-singleton-spades"
+call = "1D"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+shapes = ["4441"]
+suit_lengths = { spades = { min = 1, max = 1 } }
+
+[[rules]]
+id = "open-1d-with-4441-singleton-clubs"
+call = "1D"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+shapes = ["4441"]
+suit_lengths = { clubs = { min = 1, max = 1 } }
+
+[[rules]]
+id = "open-1c-with-4441-singleton-hearts"
+call = "1C"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+shapes = ["4441"]
+suit_lengths = { hearts = { min = 1, max = 1 } }
+
+[[rules]]
+id = "open-1c-with-4441-singleton-diamonds"
+call = "1C"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+shapes = ["4441"]
+suit_lengths = { diamonds = { min = 1, max = 1 } }
+
+[[rules]]
 id = "open-longest-suit"
 try_calls = ["1S", "1H", "1D", "1C"]
 
