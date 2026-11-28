@@ -112,6 +112,7 @@ class RuleCondition:
     hcp_ranges: tuple[tuple[int | None, int | None], ...] = ()
     min_rule_of_20: int | None = None
     shapes: frozenset[tuple[int, int, int, int]] | None = None
+    excluded_shapes: frozenset[tuple[int, int, int, int]] = frozenset()
     passout_seat: bool | None = None
     no_contract_bid: bool | None = None
     opponent_opening_calls: frozenset[Bid] | None = None
@@ -157,6 +158,8 @@ class RuleCondition:
             if context.hand.hcp + sum(top_two_suits) < self.min_rule_of_20:
                 return False
         if self.shapes is not None and context.hand.canonical_shape not in self.shapes:
+            return False
+        if context.hand.canonical_shape in self.excluded_shapes:
             return False
         for suit, minimum, maximum in self.suit_lengths:
             length = context.hand.shape[_SUIT_ORDER.index(suit)]
@@ -326,6 +329,12 @@ class RuleCondition:
                 for shape in sorted(self.shapes)
             )
             expressions.append(f"shape({seat_name}, {shape_options})")
+        if self.excluded_shapes:
+            shape_options = " + ".join(
+                f"any {''.join(str(length) for length in shape)}"
+                for shape in sorted(self.excluded_shapes)
+            )
+            expressions.append(f"!(shape({seat_name}, {shape_options}))")
         for suit, minimum, maximum in self.suit_lengths:
             suit_name = _SUIT_NAMES[suit]
             if minimum is not None:
@@ -1245,6 +1254,7 @@ def _parse_condition(
         "strengths",
         "min_rule_of_20",
         "shapes",
+        "exclude_shapes",
         "passout_seat",
         "no_contract_bid",
         "opponent_opening_calls",
@@ -1300,6 +1310,20 @@ def _parse_condition(
         if not isinstance(raw_shapes, list) or not raw_shapes:
             raise ValueError(f"Module rule {index} shapes must be a non-empty array.")
         shapes = frozenset(_parse_shape(shape) for shape in raw_shapes)
+    excluded_shapes: frozenset[tuple[int, int, int, int]] = frozenset()
+    if "exclude_shapes" in value:
+        raw_excluded_shapes = value["exclude_shapes"]
+        if not isinstance(raw_excluded_shapes, list) or not raw_excluded_shapes:
+            raise ValueError(
+                f"Module rule {index} exclude_shapes must be a non-empty array."
+            )
+        excluded_shapes = frozenset(
+            _parse_shape(shape) for shape in raw_excluded_shapes
+        )
+    if shapes is not None and shapes & excluded_shapes:
+        raise ValueError(
+            f"Module rule {index} shapes and exclude_shapes cannot overlap."
+        )
 
     passout_seat = value.get("passout_seat")
     if passout_seat is not None and not isinstance(passout_seat, bool):
@@ -1455,6 +1479,7 @@ def _parse_condition(
         hcp_ranges=hcp_ranges,
         min_rule_of_20=min_rule_of_20,
         shapes=shapes,
+        excluded_shapes=excluded_shapes,
         passout_seat=passout_seat,
         no_contract_bid=no_contract_bid,
         opponent_opening_calls=opponent_opening_calls,
@@ -2133,11 +2158,24 @@ def _rule_suit_length_ranges(
     if any(minimum > maximum for minimum, maximum in bounds.values()):
         return None
 
-    if condition.shapes is not None:
+    if condition.shapes is not None or condition.excluded_shapes:
+        candidate_shapes: set[tuple[int, int, int, int]] = set()
+        if condition.shapes is not None:
+            candidate_shapes.update(condition.shapes)
+        else:
+            for spades in range(14):
+                for hearts in range(spades + 1):
+                    for diamonds in range(hearts + 1):
+                        clubs = 13 - spades - hearts - diamonds
+                        if 0 <= clubs <= diamonds:
+                            candidate_shapes.add(
+                                (spades, hearts, diamonds, clubs)
+                            )
         quality_tiebreak = condition.suit_quality_tiebreak
         possible_shapes = {
             suit_lengths
-            for shape in condition.shapes
+            for shape in candidate_shapes
+            if shape not in condition.excluded_shapes
             for suit_lengths in permutations(shape)
             if all(
                 bounds[suit][0] <= length <= bounds[suit][1]

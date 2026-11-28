@@ -72,6 +72,9 @@ specified transfers and relays are handled directly; after 2♠, responder shows
 the cheapest legal diamond/heart/spade shortage, or bids 3NT with GF and 4♣
 with slam interest when without shortage. The opener's choices after 3♦, 3♥,
 and 3♠ are evaluated with sampled deals and double-dummy scores against par.
+Over a 2♦ or 2♥ transfer, opener's 2NT rebid with 16-17 HCP and 3M rebid with
+15 HCP require at least four cards in the transferred major and exclude 4333
+hands.
 After 2♥ and 2♦, the opener's major-suit fit responses and the responder's
 continuations are specified, with game choices evaluated by simulation.
 On the GF minor rebids after these transfers, opener shows a three-card major

@@ -1166,6 +1166,24 @@ passout_seat = true
             (
                 (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
                  Bid(2, Denomination.HEARTS), PassCall.PASS),
+                HandProfile(15, (5, 3, 3, 2)),
+                Bid(3, Denomination.SPADES),
+            ),
+            (
+                (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
+                 Bid(2, Denomination.HEARTS), PassCall.PASS),
+                HandProfile(16, (5, 3, 3, 2)),
+                Bid(2, Denomination.NOTRUMP),
+            ),
+            (
+                (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
+                 Bid(2, Denomination.HEARTS), PassCall.PASS),
+                HandProfile(16, (4, 3, 3, 3)),
+                Bid(2, Denomination.SPADES),
+            ),
+            (
+                (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
+                 Bid(2, Denomination.HEARTS), PassCall.PASS),
                 HandProfile(18, (4, 4, 3, 2)),
                 Bid(2, Denomination.SPADES),
             ),
@@ -1178,7 +1196,25 @@ passout_seat = true
             (
                 (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
                  Bid(2, Denomination.DIAMONDS), PassCall.PASS),
+                HandProfile(15, (3, 5, 3, 2)),
+                Bid(3, Denomination.HEARTS),
+            ),
+            (
+                (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
+                 Bid(2, Denomination.DIAMONDS), PassCall.PASS),
+                HandProfile(17, (2, 5, 3, 3)),
+                Bid(2, Denomination.NOTRUMP),
+            ),
+            (
+                (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
+                 Bid(2, Denomination.DIAMONDS), PassCall.PASS),
                 HandProfile(15, (3, 4, 3, 3)),
+                Bid(2, Denomination.HEARTS),
+            ),
+            (
+                (Bid(1, Denomination.NOTRUMP), PassCall.PASS,
+                 Bid(2, Denomination.DIAMONDS), PassCall.PASS),
+                HandProfile(16, (3, 4, 3, 3)),
                 Bid(2, Denomination.HEARTS),
             ),
             (
@@ -1194,6 +1230,25 @@ passout_seat = true
                     _auction_context(hand, auction, Seat.NORTH)
                 )
                 self.assertEqual(_selected_call(decision), expected)
+
+        dealer_condition = self.module.dealer_call_condition(
+            _auction_context(
+                HandProfile(16, (2, 5, 3, 3)),
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+            ),
+            Bid(2, Denomination.NOTRUMP),
+        )
+        self.assertTrue(dealer_condition.selects_call)
+        self.assertIn(
+            "!(shape(north, any 4333))",
+            " ".join(dealer_condition.expressions),
+        )
 
         continuation_cases = (
             (

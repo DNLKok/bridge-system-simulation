@@ -532,64 +532,26 @@ suit = "hearts"
 min_suit_length = 5
 
 [[rules]]
-id = "opener-bids-three-spades-over-two-hearts-15-hcp-with-four-hearts"
+id = "opener-bids-three-spades-over-two-hearts-15-hcp-with-four-plus-spades"
 call = "3S"
 
 [rules.when]
 after_opening_calls = ["PASS", "2H", "PASS"]
 min_hcp = 15
 max_hcp = 15
-suit_lengths = { spades = { min = 4, max = 4 }, hearts = { min = 4 } }
+suit_lengths = { spades = { min = 4 } }
+exclude_shapes = ["4333"]
 
 [[rules]]
-id = "opener-bids-three-spades-over-two-hearts-15-hcp-with-four-diamonds"
-call = "3S"
-
-[rules.when]
-after_opening_calls = ["PASS", "2H", "PASS"]
-min_hcp = 15
-max_hcp = 15
-suit_lengths = { spades = { min = 4, max = 4 }, diamonds = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-three-spades-over-two-hearts-15-hcp-with-four-clubs"
-call = "3S"
-
-[rules.when]
-after_opening_calls = ["PASS", "2H", "PASS"]
-min_hcp = 15
-max_hcp = 15
-suit_lengths = { spades = { min = 4, max = 4 }, clubs = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-two-notrump-over-two-hearts-16-17-hcp-with-four-hearts"
+id = "opener-bids-two-notrump-over-two-hearts-16-17-hcp-with-four-plus-spades"
 call = "2NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2H", "PASS"]
 min_hcp = 16
 max_hcp = 17
-suit_lengths = { spades = { min = 4, max = 4 }, hearts = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-two-notrump-over-two-hearts-16-17-hcp-with-four-diamonds"
-call = "2NT"
-
-[rules.when]
-after_opening_calls = ["PASS", "2H", "PASS"]
-min_hcp = 16
-max_hcp = 17
-suit_lengths = { spades = { min = 4, max = 4 }, diamonds = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-two-notrump-over-two-hearts-16-17-hcp-with-four-clubs"
-call = "2NT"
-
-[rules.when]
-after_opening_calls = ["PASS", "2H", "PASS"]
-min_hcp = 16
-max_hcp = 17
-suit_lengths = { spades = { min = 4, max = 4 }, clubs = { min = 4 } }
+suit_lengths = { spades = { min = 4 } }
+exclude_shapes = ["4333"]
 
 [[rules]]
 id = "opener-relays-two-hearts-to-two-spades"
@@ -741,64 +703,26 @@ strengths = ["Slam interest"]
 suit_lengths = { spades = { min = 6 }, hearts = { min = 2 }, diamonds = { min = 2 }, clubs = { min = 2 } }
 
 [[rules]]
-id = "opener-bids-three-hearts-over-two-diamonds-15-hcp-with-four-spades"
+id = "opener-bids-three-hearts-over-two-diamonds-15-hcp-with-four-plus-hearts"
 call = "3H"
 
 [rules.when]
 after_opening_calls = ["PASS", "2D", "PASS"]
 min_hcp = 15
 max_hcp = 15
-suit_lengths = { hearts = { min = 4, max = 4 }, spades = { min = 4 } }
+suit_lengths = { hearts = { min = 4 } }
+exclude_shapes = ["4333"]
 
 [[rules]]
-id = "opener-bids-three-hearts-over-two-diamonds-15-hcp-with-four-diamonds"
-call = "3H"
-
-[rules.when]
-after_opening_calls = ["PASS", "2D", "PASS"]
-min_hcp = 15
-max_hcp = 15
-suit_lengths = { hearts = { min = 4, max = 4 }, diamonds = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-three-hearts-over-two-diamonds-15-hcp-with-four-clubs"
-call = "3H"
-
-[rules.when]
-after_opening_calls = ["PASS", "2D", "PASS"]
-min_hcp = 15
-max_hcp = 15
-suit_lengths = { hearts = { min = 4, max = 4 }, clubs = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-two-notrump-over-two-diamonds-16-17-hcp-with-four-spades"
+id = "opener-bids-two-notrump-over-two-diamonds-16-17-hcp-with-four-plus-hearts"
 call = "2NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2D", "PASS"]
 min_hcp = 16
 max_hcp = 17
-suit_lengths = { hearts = { min = 4, max = 4 }, spades = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-two-notrump-over-two-diamonds-16-17-hcp-with-four-diamonds"
-call = "2NT"
-
-[rules.when]
-after_opening_calls = ["PASS", "2D", "PASS"]
-min_hcp = 16
-max_hcp = 17
-suit_lengths = { hearts = { min = 4, max = 4 }, diamonds = { min = 4 } }
-
-[[rules]]
-id = "opener-bids-two-notrump-over-two-diamonds-16-17-hcp-with-four-clubs"
-call = "2NT"
-
-[rules.when]
-after_opening_calls = ["PASS", "2D", "PASS"]
-min_hcp = 16
-max_hcp = 17
-suit_lengths = { hearts = { min = 4, max = 4 }, clubs = { min = 4 } }
+suit_lengths = { hearts = { min = 4 } }
+exclude_shapes = ["4333"]
 
 [[rules]]
 id = "opener-relays-two-diamonds-to-two-hearts"
