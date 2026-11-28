@@ -301,7 +301,7 @@ call = "3S"
 
 [rules.when]
 after_opening_calls = ["PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 
 [rules.when.suit_lengths.spades]
 min = 1
@@ -325,7 +325,7 @@ call = "3S"
 
 [rules.when]
 after_opening_calls = ["PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 
 [rules.when.suit_lengths.spades]
 min = 1
@@ -349,7 +349,7 @@ call = "3H"
 
 [rules.when]
 after_opening_calls = ["PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 
 [rules.when.suit_lengths.spades]
 min = 3
@@ -373,7 +373,7 @@ call = "3H"
 
 [rules.when]
 after_opening_calls = ["PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 
 [rules.when.suit_lengths.spades]
 min = 3
@@ -424,21 +424,21 @@ min_suit_length = 6
 max_outside_major_length = 3
 
 [[rules]]
-id = "3nt-gf-without-four-card-major"
+id = "3nt-gf-or-slam-interest-without-four-card-major"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 suit_lengths = { spades = { max = 3 }, hearts = { max = 3 } }
 
 [[rules]]
-id = "3nt-gf-with-4333-shape"
+id = "3nt-gf-or-slam-interest-with-4333-shape"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 shapes = ["4333"]
 
 [[rules]]
