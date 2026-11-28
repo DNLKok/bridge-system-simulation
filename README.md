@@ -74,7 +74,11 @@ with slam interest when without shortage. The opener's choices after 3♦, 3♥,
 and 3♠ are evaluated with sampled deals and double-dummy scores against par.
 After 2♥ and 2♦, the opener's major-suit fit responses and the responder's
 continuations are specified, with game choices evaluated by simulation.
-Continuations after 2♣ remain to be specified.
+Responder uses 2♣ with invitational/GF/Slam-interest hands having exactly four
+cards in one or both majors (the other major no longer), or with GF/Slam-interest
+5-4 major hands either way; the weak 5+/4+ major treatment is unchanged. Other
+five-card-major hands use the corresponding Jacoby transfer. Continuations after
+2♣ remain to be specified.
 
 Modules can also declare public auction signals with `public_signals`. These
 signals attach a confirmed fit or game force to an auction pattern, independent

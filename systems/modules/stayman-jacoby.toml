@@ -1,7 +1,7 @@
 schema_version = 1
 kind = "module"
 id = "stayman-jacoby"
-version = "1.2.0"
+version = "1.3.0"
 name = "Stayman-Jacoby"
 
 partner_opening_calls = ["1NT"]
@@ -365,24 +365,40 @@ min_suit_length = 6
 max_outside_major_length = 3
 
 [[rules]]
-id = "2c-invitational-gf-or-slam-interest-with-four-card-spades"
+id = "2c-invitational-gf-or-slam-interest-with-four-spades"
 call = "2C"
 
 [rules.when]
 after_opening_calls = ["PASS"]
 strengths = ["Invitational", "GF", "Slam interest"]
-suit = "spades"
-min_suit_length = 4
+suit_lengths = { spades = { min = 4, max = 4 }, hearts = { max = 4 } }
 
 [[rules]]
-id = "2c-invitational-gf-or-slam-interest-with-four-card-hearts"
+id = "2c-invitational-gf-or-slam-interest-with-four-hearts"
 call = "2C"
 
 [rules.when]
 after_opening_calls = ["PASS"]
 strengths = ["Invitational", "GF", "Slam interest"]
-suit = "hearts"
-min_suit_length = 4
+suit_lengths = { hearts = { min = 4, max = 4 }, spades = { max = 4 } }
+
+[[rules]]
+id = "2c-gf-or-slam-interest-with-five-spades-and-four-hearts"
+call = "2C"
+
+[rules.when]
+after_opening_calls = ["PASS"]
+strengths = ["GF", "Slam interest"]
+suit_lengths = { spades = { min = 5, max = 5 }, hearts = { min = 4, max = 4 } }
+
+[[rules]]
+id = "2c-gf-or-slam-interest-with-five-hearts-and-four-spades"
+call = "2C"
+
+[rules.when]
+after_opening_calls = ["PASS"]
+strengths = ["GF", "Slam interest"]
+suit_lengths = { hearts = { min = 5, max = 5 }, spades = { min = 4, max = 4 } }
 
 [[rules]]
 id = "2c-weak-with-five-spades-and-four-hearts"
