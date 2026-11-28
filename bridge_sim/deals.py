@@ -35,6 +35,10 @@ class Vulnerability(str, Enum):
     ALL = "All"
 
 
+class NoDealsGeneratedError(RuntimeError):
+    """Raised when Dealer finishes without generating any PBN boards."""
+
+
 @dataclass(frozen=True)
 class CardHand:
     """A PBN hand, with suit strings ordered spades, hearts, diamonds, clubs."""
@@ -303,7 +307,7 @@ class DealerProvider:
                     f"dealer exited with status {return_code}.\n{diagnostic}"
                 )
             if board_count == 0:
-                raise RuntimeError(
+                raise NoDealsGeneratedError(
                     "dealer produced no PBN boards; use an action that emits "
                     "complete PBN deals, such as 'action printpbn'."
                 )

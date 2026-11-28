@@ -4,7 +4,12 @@ from pathlib import Path
 from typing import Callable, Sequence
 from unittest.mock import patch
 
-from bridge_sim.deals import CardHand, PBNBoard, Vulnerability
+from bridge_sim.deals import (
+    CardHand,
+    NoDealsGeneratedError,
+    PBNBoard,
+    Vulnerability,
+)
 from bridge_sim.model import (
     AuctionEntry,
     Bid,
@@ -616,6 +621,28 @@ class StaymanJacobyTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "requires a simulation evaluator"):
             module.choose(context)
+
+    def test_generic_game_force_accepts_pass_as_simulation_fallback(self) -> None:
+        module = load_module(GAME_FORCE_MODULE_PATH)
+        context = DecisionContext(
+            hand=HandProfile(16, (4, 3, 3, 3)),
+            auction=(),
+            legal_calls=LEGAL_CALLS,
+            seat=Seat.NORTH,
+            dealer=Seat.NORTH,
+            vulnerability=Vulnerability.NONE,
+            simulation_evaluator=lambda candidates: PassCall.PASS,
+            auction_strength=AuctionStrength.GAME_FORCING,
+            fit_states={
+                Denomination.CLUBS: SuitFitAssessment(
+                    private=PrivateFitState.FIT
+                ),
+            },
+        )
+
+        decision = module.choose(context)
+
+        self.assertEqual(_selected_call(decision), PassCall.PASS)
 
     def test_auction_state_tracks_strength_and_public_private_fits(self) -> None:
         system = load_system(SYSTEM_PATH)
@@ -2026,6 +2053,25 @@ passout_seat = true
         self.assertEqual(
             rate_calls.call_args.kwargs["candidates"],
             (PassCall.PASS, expected_call),
+        )
+
+        with patch(
+            "bridge_sim.model_assistant.rate_candidate_calls",
+            side_effect=NoDealsGeneratedError("no compatible deals"),
+        ) as failed_rate_calls:
+            with self.assertWarnsRegex(RuntimeWarning, "incompatible"):
+                fallback_result = run_auction(
+                    board,
+                    system,
+                    system,
+                    simulation_n=1,
+                    simulation_seed=12345,
+                )
+
+        fallback_seat = failed_rate_calls.call_args.kwargs["perspective"]
+        self.assertIn(
+            AuctionEntry(fallback_seat, PassCall.PASS),
+            fallback_result.entries,
         )
 
 

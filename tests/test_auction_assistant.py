@@ -68,7 +68,7 @@ class AuctionAssistantTests(unittest.TestCase):
             produce=2,
         )
 
-        self.assertIn("generate 10000000000", script)
+        self.assertIn("generate 100000000", script)
         self.assertIn("produce 2", script)
         self.assertIn("vulnerable ns", script)
         self.assertIn("predeal east SAKQ, HJT9, D876, C5432", script)

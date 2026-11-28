@@ -459,7 +459,9 @@ class BiddingRule:
             if not candidates:
                 return None
             call = context.simulation_evaluator(candidates)
-            if call not in candidates:
+            if call not in candidates and (
+                call is not PassCall.PASS or call not in context.legal_calls
+            ):
                 raise RuntimeError(
                     f"Simulation for rule {self.rule_id!r} returned "
                     f"unconfigured call {call!s}."
@@ -2447,7 +2449,9 @@ def _jump_to_game_in_gf(
                 f"Rule {rule_id!r} requires a simulation evaluator."
             )
         call = context.simulation_evaluator(legal_candidates)
-        if call not in legal_candidates:
+        if call not in legal_candidates and (
+            call is not PassCall.PASS or call not in context.legal_calls
+        ):
             raise RuntimeError(
                 f"Simulation for rule {rule_id!r} returned "
                 f"unconfigured call {call!s}."

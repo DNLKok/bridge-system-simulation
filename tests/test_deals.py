@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from bridge_sim import (
     HandProfile,
@@ -9,6 +10,7 @@ from bridge_sim import (
     parse_pbn,
     run_auction,
 )
+from bridge_sim.deals import DealerProvider, NoDealsGeneratedError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +58,23 @@ class PBNTests(unittest.TestCase):
 
         self.assertTrue(result.passed_out)
         self.assertEqual(len(result.entries), 4)
+
+    def test_dealer_reports_when_no_deals_match(self) -> None:
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "no-deals.dealer"
+            script.write_text(
+                "generate 10\n"
+                "produce 1\n"
+                "condition (hcp(north) >= 38)\n"
+                "action printpbn\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                NoDealsGeneratedError,
+                "produced no PBN boards",
+            ):
+                tuple(DealerProvider().generate(script, seed=3))
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .auction import run_auction
+from .auction_assistant import DEFAULT_GENERATE_LIMIT
 from .deals import DealerProvider, PBNBoard, Vulnerability
 from .dds import TablesPBN4Solver
 from .model import (
@@ -553,7 +554,7 @@ def _conditional_dealer_script(
         Vulnerability.ALL: "all",
     }[vulnerability]
     lines = [
-        "generate 10000000000",
+        f"generate {DEFAULT_GENERATE_LIMIT}",
         "produce 1",
         f"dealer {dealer.name.lower()}",
         f"vulnerable {vulnerability_name}",

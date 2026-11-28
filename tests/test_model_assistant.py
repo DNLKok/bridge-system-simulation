@@ -134,6 +134,15 @@ class ModelAssistantTests(unittest.TestCase):
         self.assertEqual(result.system_call, PassCall.PASS)
         self.assertEqual(result.recommended_call, PassCall.PASS)
 
+    def test_no_generated_deals_warns_and_recommends_pass(self) -> None:
+        with self.assertWarnsRegex(RuntimeWarning, "incompatible"):
+            result = self._run(FakeDealerProvider(()), FakeDDS(), n=1)
+
+        self.assertEqual(result.boards, ())
+        self.assertEqual(result.system_call, PassCall.PASS)
+        self.assertEqual(result.recommended_call, PassCall.PASS)
+        self.assertEqual(tuple(rating.call for rating in result.ratings), (PassCall.PASS,))
+
     def test_advanced_flag_keeps_basic_ratings_when_in_book(self) -> None:
         provider = FakeDealerProvider((self.board,))
         result = self._run(provider, FakeDDS(), n=1, advanced=True)

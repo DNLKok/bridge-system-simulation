@@ -38,7 +38,7 @@ _VULNERABILITY_NAMES = {
     Vulnerability.ALL: "all",
 }
 _PASSOUT_HAND = CardHand(("AKQJ", "AKQ", "AKQ", "AKQ"))
-DEFAULT_GENERATE_LIMIT = 10_000_000_000
+DEFAULT_GENERATE_LIMIT = 100_000_000
 
 
 def generate_dealer_script(

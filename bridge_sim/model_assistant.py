@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from statistics import mean
@@ -17,7 +18,13 @@ from .auction_assistant import (
     generate_dealer_script,
 )
 from .dds import TablesPBN4Solver
-from .deals import CardHand, DealerProvider, PBNBoard, Vulnerability
+from .deals import (
+    CardHand,
+    DealerProvider,
+    NoDealsGeneratedError,
+    PBNBoard,
+    Vulnerability,
+)
 from .imps import calculate_imps
 from .model import (
     AuctionEntry,
@@ -83,6 +90,15 @@ class CallRating:
     call: Call
     expected_imps: float
     note: str | None = None
+
+
+def _warn_no_compatible_deals() -> None:
+    warnings.warn(
+        "Dealer produced no deals within the configured attempt limit; "
+        "the auction constraints appear incompatible. Passing instead.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 
 def rate_candidate_calls(
@@ -175,21 +191,32 @@ def run_model_assistant(
         if isinstance(partner_system, CompositeBiddingSystem)
         else load_system(partner_system)
     )
-    boards, trick_tables = _sample_auction_boards(
-        perspective=perspective,
-        hand=hand,
-        auction=auction,
-        partner_system=partner_system,
-        opponent_system=opponent_system,
-        dealer=dealer,
-        vulnerability=vulnerability,
-        n=n,
-        seed=seed,
-        generate=generate,
-        provider=provider,
-        solver=solver,
-        unconstrained_entries=unconstrained_entries,
-    )
+    try:
+        boards, trick_tables = _sample_auction_boards(
+            perspective=perspective,
+            hand=hand,
+            auction=auction,
+            partner_system=partner_system,
+            opponent_system=opponent_system,
+            dealer=dealer,
+            vulnerability=vulnerability,
+            n=n,
+            seed=seed,
+            generate=generate,
+            provider=provider,
+            solver=solver,
+            unconstrained_entries=unconstrained_entries,
+        )
+    except NoDealsGeneratedError:
+        _warn_no_compatible_deals()
+        return ModelAssistantResult(
+            (),
+            (),
+            False,
+            PassCall.PASS,
+            (CallRating(PassCall.PASS, 0.0, "No compatible deals; passing."),),
+            PassCall.PASS,
+        )
 
     legal_calls, standing_contract = _auction_state(
         auction,
@@ -198,22 +225,26 @@ def run_model_assistant(
     )
 
     def evaluate_candidates(candidates: Sequence[Call]) -> Call:
-        ratings = rate_candidate_calls(
-            perspective=perspective,
-            hand=hand,
-            auction=auction,
-            partner_system=partner_system,
-            opponent_system=opponent_system,
-            dealer=dealer,
-            vulnerability=vulnerability,
-            candidates=candidates,
-            n=n,
-            seed=seed,
-            generate=generate,
-            dealer_provider=provider,
-            dds_solver=solver,
-            unconstrained_entries=unconstrained_entries,
-        )
+        try:
+            ratings = rate_candidate_calls(
+                perspective=perspective,
+                hand=hand,
+                auction=auction,
+                partner_system=partner_system,
+                opponent_system=opponent_system,
+                dealer=dealer,
+                vulnerability=vulnerability,
+                candidates=candidates,
+                n=n,
+                seed=seed,
+                generate=generate,
+                dealer_provider=provider,
+                dds_solver=solver,
+                unconstrained_entries=unconstrained_entries,
+            )
+        except NoDealsGeneratedError:
+            _warn_no_compatible_deals()
+            return PassCall.PASS
         return _highest_rated_call(candidates, ratings)
 
     system_decision = system.choose_call(
@@ -248,18 +279,29 @@ def run_model_assistant(
     if advanced and out_of_book:
         advanced_calls = _advanced_candidate_calls(legal_calls)
         if advanced_calls:
-            advanced_board = _generate_advanced_outer_board(
-                provider,
-                perspective=perspective,
-                hand=hand,
-                auction=auction,
-                partner_system=partner_system,
-                opponent_system=opponent_system,
-                dealer=dealer,
-                vulnerability=vulnerability,
-                generate=generate,
-                seed=seed + n + len(advanced_calls) + 1,
-            )
+            try:
+                advanced_board = _generate_advanced_outer_board(
+                    provider,
+                    perspective=perspective,
+                    hand=hand,
+                    auction=auction,
+                    partner_system=partner_system,
+                    opponent_system=opponent_system,
+                    dealer=dealer,
+                    vulnerability=vulnerability,
+                    generate=generate,
+                    seed=seed + n + len(advanced_calls) + 1,
+                )
+            except NoDealsGeneratedError:
+                _warn_no_compatible_deals()
+                return ModelAssistantResult(
+                    boards,
+                    trick_tables,
+                    out_of_book,
+                    system_call,
+                    ratings,
+                    PassCall.PASS,
+                )
             ratings = _rate_calls_with_partner_simulations(
                 ratings,
                 advanced_board,
@@ -329,6 +371,10 @@ def _sample_auction_boards(
         script_path.write_text(script, encoding="utf-8")
         boards = tuple(provider.generate(script_path, seed=seed))
 
+    if not boards:
+        raise NoDealsGeneratedError(
+            "Dealer produced no deals within the configured attempt limit."
+        )
     if len(boards) != n:
         raise RuntimeError(
             f"Dealer produced {len(boards)} boards; requested exactly {n}. "
@@ -417,6 +463,11 @@ def _generate_advanced_outer_board(
         script_path.write_text(script, encoding="utf-8")
         boards = tuple(provider.generate(script_path, seed=seed))
 
+    if not boards:
+        raise NoDealsGeneratedError(
+            "Dealer produced no advanced outer deal within the configured "
+            "attempt limit."
+        )
     if len(boards) != 1:
         raise RuntimeError(
             f"Dealer produced {len(boards)} advanced outer boards; requested one."

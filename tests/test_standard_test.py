@@ -294,6 +294,7 @@ class StandardTestReportTests(unittest.TestCase):
             Vulnerability.NORTH_SOUTH,
             conditions,
         )
+        self.assertIn("generate 100000000", script)
         self.assertIn("dealer south", script)
         self.assertIn("vulnerable ns", script)
         self.assertEqual(

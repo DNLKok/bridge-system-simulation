@@ -4,7 +4,7 @@ import time
 from collections.abc import Sequence
 
 from . import model as _model
-from .deals import PBNBoard, Vulnerability
+from .deals import NoDealsGeneratedError, PBNBoard, Vulnerability
 from .model import (
     AuctionEntry,
     AuctionDeal,
@@ -101,6 +101,7 @@ def run_auction(
                 )
             from .model_assistant import (
                 _highest_rated_call,
+                _warn_no_compatible_deals,
                 rate_candidate_calls,
             )
 
@@ -110,19 +111,23 @@ def run_auction(
                 for index, entry in enumerate(auction)
                 if _partnership(entry.seat) != _partnership(current_seat)
             )
-            ratings = rate_candidate_calls(
-                perspective=current_seat,
-                hand=deal.hands[current_seat],
-                auction=auction,
-                partner_system=system,
-                opponent_system=opponent_system,
-                dealer=dealer,
-                vulnerability=vulnerability,
-                candidates=candidates,
-                n=simulation_n,
-                seed=resolved_simulation_seed,
-                unconstrained_entries=unconstrained_entries,
-            )
+            try:
+                ratings = rate_candidate_calls(
+                    perspective=current_seat,
+                    hand=deal.hands[current_seat],
+                    auction=auction,
+                    partner_system=system,
+                    opponent_system=opponent_system,
+                    dealer=dealer,
+                    vulnerability=vulnerability,
+                    candidates=candidates,
+                    n=simulation_n,
+                    seed=resolved_simulation_seed,
+                    unconstrained_entries=unconstrained_entries,
+                )
+            except NoDealsGeneratedError:
+                _warn_no_compatible_deals()
+                return PassCall.PASS
             return _highest_rated_call(candidates, ratings)
 
         context = DecisionContext(
