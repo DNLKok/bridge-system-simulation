@@ -13,6 +13,9 @@ PASSOUT_SYSTEM = ROOT / "systems" / "passout-cheapest-call.toml"
 PREEMPT_SYSTEM = ROOT / "systems" / "traditional-preempts.toml"
 SIMPLE_OVERCALL_SYSTEM = ROOT / "systems" / "simple-overcalls.toml"
 STANDARD_OPENINGS_SYSTEM = ROOT / "systems" / "standard-openings.toml"
+STANDARD_STAYMAN_JACOBY_SYSTEM = (
+    ROOT / "systems" / "standard-stayman-jacoby.toml"
+)
 HAND = CardHand(("AKQ", "JT9", "876", "5432"))
 
 
@@ -91,6 +94,37 @@ class AuctionAssistantTests(unittest.TestCase):
             "condition (!((hcp(north) >= 15)",
             script,
         )
+
+    def test_gf_club_rebid_constraints_allow_strong_stayman_two_clubs(self) -> None:
+        script = generate_dealer_script(
+            perspective=Seat.WEST,
+            hand=CardHand(("AQ7", "QT86", "KJT", "QJ8")),
+            auction=(
+                AuctionEntry(Seat.WEST, Bid(1, Denomination.NOTRUMP)),
+                AuctionEntry(Seat.NORTH, PassCall.PASS),
+                AuctionEntry(Seat.EAST, Bid(2, Denomination.CLUBS)),
+                AuctionEntry(Seat.SOUTH, PassCall.PASS),
+                AuctionEntry(Seat.WEST, Bid(2, Denomination.DIAMONDS)),
+                AuctionEntry(Seat.NORTH, PassCall.PASS),
+                AuctionEntry(Seat.EAST, Bid(3, Denomination.CLUBS)),
+                AuctionEntry(Seat.SOUTH, PassCall.PASS),
+            ),
+            partner_system=STANDARD_STAYMAN_JACOBY_SYSTEM,
+            opponent_system=STANDARD_STAYMAN_JACOBY_SYSTEM,
+            dealer=Seat.WEST,
+            vulnerability=Vulnerability.NONE,
+            generate=1_000_000,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gf-stayman-clubs.dealer"
+            path.write_text(script, encoding="utf-8")
+            board = next(DealerProvider().generate(path))
+
+        east = board.hands[Seat.EAST]
+        self.assertGreaterEqual(east.hcp, 9)
+        self.assertGreaterEqual(east.shape[3], 5)
+        self.assertTrue(east.shape[0] == 4 or east.shape[1] == 4)
 
     def test_translates_suit_preempt_constraints_to_dealer_syntax(self) -> None:
         script = generate_dealer_script(

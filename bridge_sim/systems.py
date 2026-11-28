@@ -718,14 +718,42 @@ class BiddingModule:
         if not _matches_module_opening(context, self):
             return DealerCallCondition()
         expressions: list[str] = []
+        matching_branches: list[tuple[str, ...]] = []
         for rule in self.rules:
             condition = rule.dealer_call_condition(context, observed_call)
-            expressions.extend(condition.expressions)
             if condition.impossible:
+                if matching_branches:
+                    break
                 return condition
             if condition.selects_call:
-                return DealerCallCondition(tuple(expressions), selects_call=True)
-        return DealerCallCondition(tuple(expressions))
+                matching_branches.append(
+                    (*expressions, *condition.expressions)
+                )
+                if not condition.expressions:
+                    break
+                expressions.append(
+                    "!(" + " && ".join(condition.expressions) + ")"
+                )
+            else:
+                expressions.extend(condition.expressions)
+
+        if not matching_branches:
+            return DealerCallCondition(tuple(expressions))
+        if len(matching_branches) == 1:
+            return DealerCallCondition(
+                matching_branches[0],
+                selects_call=True,
+            )
+
+        alternatives = []
+        for branch in matching_branches:
+            alternatives.append(
+                "(" + " && ".join(f"({expression})" for expression in branch) + ")"
+            )
+        return DealerCallCondition(
+            ("(" + " || ".join(alternatives) + ")",),
+            selects_call=True,
+        )
 
 
 class BiddingSystem(Protocol):
