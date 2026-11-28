@@ -18,6 +18,7 @@ from .model import (
     Seat,
 )
 from .systems import (
+    AuctionStateGenerator,
     BiddingSystem,
     CompositeBiddingSystem,
     DecisionContext,
@@ -62,6 +63,11 @@ def run_auction(
     current_bidder: Seat | None = None
     multiplier = 1
     consecutive_passes = 0
+    state_generators = {
+        id(system): AuctionStateGenerator(system.modules)
+        for system in (north_south_system, east_west_system)
+        if isinstance(system, CompositeBiddingSystem)
+    }
 
     while True:
         legal_calls = _legal_calls(
@@ -119,17 +125,22 @@ def run_auction(
             )
             return _highest_rated_call(candidates, ratings)
 
-        call = system.choose_call(
-            DecisionContext(
-                hand=deal.hand_for(current_seat),
-                auction=tuple(entries),
-                legal_calls=legal_calls,
-                seat=current_seat,
-                dealer=dealer,
-                vulnerability=vulnerability,
-                simulation_evaluator=evaluate_candidates,
-            )
+        context = DecisionContext(
+            hand=deal.hand_for(current_seat),
+            auction=tuple(entries),
+            legal_calls=legal_calls,
+            seat=current_seat,
+            dealer=dealer,
+            vulnerability=vulnerability,
+            simulation_evaluator=evaluate_candidates,
         )
+        if isinstance(system, CompositeBiddingSystem):
+            call = system.choose_call_with_state(
+                context,
+                state_generators[id(system)],
+            )
+        else:
+            call = system.choose_call(context)
         if call is OutOfBookDecision.OUT_OF_BOOK:
             raise RuntimeError(
                 f"System {type(system).__name__!r} is out of book for "
@@ -141,7 +152,10 @@ def run_auction(
                 f"for seat {current_seat.value}."
             )
 
-        entries.append(AuctionEntry(current_seat, call))
+        entry = AuctionEntry(current_seat, call)
+        for state_generator in state_generators.values():
+            state_generator.advance(entry, context)
+        entries.append(entry)
         if isinstance(call, Bid):
             current_bid = call
             current_bidder = current_seat
