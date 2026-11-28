@@ -157,6 +157,7 @@ class TablesPBN4SolverTests(unittest.TestCase):
             self.assertTrue(
                 result.score_ns is not None
                 and result.par_result is not None
+                and result.par_score_ns is not None
                 and result.score_vs_par
                 == result.score_ns - result.par_score_ns
             )
@@ -202,6 +203,7 @@ class TablesPBN4SolverTests(unittest.TestCase):
             all(
                 result.score_ns is not None
                 and result.par_result is not None
+                and result.par_score_ns is not None
                 and result.score_vs_par
                 == result.score_ns - result.par_score_ns
                 for result in results
