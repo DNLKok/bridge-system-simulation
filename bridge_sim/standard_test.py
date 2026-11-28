@@ -60,6 +60,7 @@ class StandardTestSettings:
     config_path: Path
     deal_count: int
     seed: int
+    decision_simulation_n: int
     advanced_out_of_book: bool
     north_south_system: Path
     north_south_abbreviation: str
@@ -88,6 +89,7 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
     if not isinstance(simulation, dict) or set(simulation) != {
         "deal_count",
         "seed",
+        "decision_simulation_n",
         "advanced_out_of_book",
         "output_directory",
     }:
@@ -103,6 +105,11 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
         )
 
     deal_count = _integer_setting(simulation, "deal_count", minimum=1)
+    decision_simulation_n = _integer_setting(
+        simulation,
+        "decision_simulation_n",
+        minimum=1,
+    )
     if simulation["seed"] == "unix":
         seed = int(time.time())
     else:
@@ -126,6 +133,7 @@ def load_settings(path: str | Path = _DEFAULT_CONFIG) -> StandardTestSettings:
         config_path=config_path,
         deal_count=deal_count,
         seed=seed,
+        decision_simulation_n=decision_simulation_n,
         advanced_out_of_book=advanced,
         north_south_system=relative_path(systems["north_south"], "north_south"),
         north_south_abbreviation=_system_abbreviation(
@@ -195,6 +203,8 @@ def _run_standard_test(
                 east_west,
                 dealer=board.dealer,
                 vulnerability=board.vulnerability,
+                simulation_n=settings.decision_simulation_n,
+                simulation_seed=settings.seed,
             ),
         )
         for board in boards
@@ -356,6 +366,9 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
   <div class="metadata">
     <p class="setting"><span class="label">Deals:</span> {settings.deal_count}</p>
     <p class="setting"><span class="label">Dealer seed:</span> {settings.seed}</p>
+    <p class="setting"><span class="label">Decision simulation N:</span>
+      {settings.decision_simulation_n}
+    </p>
     <p class="setting"><span class="label">Advanced out-of-book logic:</span> Disabled</p>
     <p class="setting"><span class="label">Dealer / vulnerability:</span>
       Standard 16-board rotation

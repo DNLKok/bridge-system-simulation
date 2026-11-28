@@ -1,17 +1,27 @@
 import unittest
 from pathlib import Path
+from typing import Callable, Sequence
+from unittest.mock import patch
 
-from bridge_sim.deals import Vulnerability
+from bridge_sim.deals import CardHand, PBNBoard, Vulnerability
 from bridge_sim.model import (
     AuctionEntry,
     Bid,
+    Call,
     Denomination,
     DoubleCall,
     HandProfile,
     PassCall,
     Seat,
 )
-from bridge_sim.systems import DecisionContext, load_module
+from bridge_sim.auction import run_auction
+from bridge_sim.model_assistant import CallRating
+from bridge_sim.systems import (
+    CompositeBiddingSystem,
+    DecisionContext,
+    ModuleDecision,
+    load_module,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +58,35 @@ def _context(
         dealer=dealer,
         vulnerability=Vulnerability.NONE,
     )
+
+
+def _auction_context(
+    hand: HandProfile,
+    calls: tuple[Call, ...],
+    seat: Seat,
+    *,
+    simulation_evaluator: Callable[[Sequence[Call]], Call] | None = None,
+) -> DecisionContext:
+    current_seat = Seat.NORTH
+    auction: list[AuctionEntry] = []
+    for call in calls:
+        auction.append(AuctionEntry(current_seat, call))
+        current_seat = current_seat.next
+    return DecisionContext(
+        hand=hand,
+        auction=tuple(auction),
+        legal_calls=LEGAL_CALLS,
+        seat=seat,
+        dealer=Seat.NORTH,
+        vulnerability=Vulnerability.NONE,
+        simulation_evaluator=simulation_evaluator,
+    )
+
+
+def _selected_call(decision: ModuleDecision | None) -> Call:
+    if decision is None:
+        raise AssertionError("Expected the module to select a call.")
+    return decision.call
 
 
 class StaymanJacobyTests(unittest.TestCase):
@@ -145,6 +184,299 @@ class StaymanJacobyTests(unittest.TestCase):
                 and "(hcp(south) <= 14)" in expression
                 for expression in condition.expressions
             )
+        )
+
+    def test_continuations_are_limited_to_their_auction_stage(self) -> None:
+        opener = self.module.choose(
+            _auction_context(
+                HandProfile(16, (4, 3, 3, 3)),
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(4, Denomination.HEARTS),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+            )
+        )
+        self.assertEqual(_selected_call(opener), Bid(4, Denomination.SPADES))
+
+        responder = self.module.choose(
+            _auction_context(
+                HandProfile(9, (6, 2, 3, 2)),
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(4, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(4, Denomination.SPADES),
+                    PassCall.PASS,
+                ),
+                Seat.SOUTH,
+            )
+        )
+        self.assertEqual(_selected_call(responder), PassCall.PASS)
+
+    def test_opener_continuations_over_two_notrump(self) -> None:
+        auction = (
+            Bid(1, Denomination.NOTRUMP),
+            PassCall.PASS,
+            Bid(2, Denomination.NOTRUMP),
+            PassCall.PASS,
+        )
+        for hcp, expected in (
+            (15, PassCall.PASS),
+            (16, Bid(3, Denomination.NOTRUMP)),
+            (17, Bid(3, Denomination.NOTRUMP)),
+        ):
+            with self.subTest(hcp=hcp):
+                decision = self.module.choose(
+                    _auction_context(
+                        HandProfile(hcp, (4, 3, 3, 3)),
+                        auction,
+                        Seat.NORTH,
+                    )
+                )
+                self.assertEqual(_selected_call(decision), expected)
+
+    def test_three_club_diamond_relay_responder_actions(self) -> None:
+        auction = (
+            Bid(1, Denomination.NOTRUMP),
+            PassCall.PASS,
+            Bid(3, Denomination.CLUBS),
+            PassCall.PASS,
+            Bid(3, Denomination.DIAMONDS),
+            PassCall.PASS,
+        )
+        cases = (
+            (HandProfile(7, (2, 2, 7, 2)), PassCall.PASS),
+            (HandProfile(9, (1, 2, 8, 2)), Bid(3, Denomination.SPADES)),
+            (HandProfile(9, (2, 1, 8, 2)), Bid(3, Denomination.HEARTS)),
+            (HandProfile(9, (2, 2, 7, 2)), Bid(3, Denomination.NOTRUMP)),
+            (HandProfile(15, (2, 2, 8, 1)), Bid(4, Denomination.CLUBS)),
+            (HandProfile(15, (2, 2, 7, 2)), Bid(4, Denomination.DIAMONDS)),
+        )
+        for hand, expected in cases:
+            with self.subTest(hand=hand):
+                decision = self.module.choose(
+                    _auction_context(hand, auction, Seat.SOUTH)
+                )
+                self.assertEqual(_selected_call(decision), expected)
+
+    def test_two_spade_club_relay_and_responder_strength_actions(self) -> None:
+        opener_auction = (
+            Bid(1, Denomination.NOTRUMP),
+            PassCall.PASS,
+            Bid(2, Denomination.SPADES),
+            PassCall.PASS,
+        )
+        opener_cases = (
+            (
+                HandProfile(15, (3, 3, 3, 4), (4, 4, 5, 2)),
+                Bid(2, Denomination.NOTRUMP),
+            ),
+            (
+                HandProfile(15, (3, 3, 3, 4), (5, 4, 5, 1)),
+                Bid(3, Denomination.CLUBS),
+            ),
+        )
+        for hand, expected in opener_cases:
+            with self.subTest(hand=hand):
+                decision = self.module.choose(
+                    _auction_context(hand, opener_auction, Seat.NORTH)
+                )
+                self.assertEqual(_selected_call(decision), expected)
+
+        responder_cases = (
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(3, Denomination.CLUBS),
+                    PassCall.PASS,
+                ),
+                HandProfile(7, (3, 3, 3, 4)),
+                PassCall.PASS,
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(3, Denomination.CLUBS),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (2, 3, 1, 7)),
+                Bid(3, Denomination.DIAMONDS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                HandProfile(7, (3, 3, 3, 4)),
+                Bid(3, Denomination.CLUBS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                HandProfile(8, (3, 3, 3, 4)),
+                Bid(3, Denomination.NOTRUMP),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (2, 1, 3, 7)),
+                Bid(3, Denomination.HEARTS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                HandProfile(9, (2, 1, 1, 9)),
+                Bid(3, Denomination.DIAMONDS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                HandProfile(15, (2, 2, 3, 6)),
+                Bid(4, Denomination.CLUBS),
+            ),
+        )
+        for auction, hand, expected in responder_cases:
+            with self.subTest(auction=auction, hand=hand):
+                decision = self.module.choose(
+                    _auction_context(hand, auction, Seat.SOUTH)
+                )
+                self.assertEqual(_selected_call(decision), expected)
+
+    def test_simulation_rule_uses_configured_legal_candidates(self) -> None:
+        cases = (
+            (
+                Bid(3, Denomination.DIAMONDS),
+                [PassCall.PASS, Bid(3, Denomination.NOTRUMP)],
+            ),
+            (
+                Bid(3, Denomination.SPADES),
+                [
+                    Bid(3, Denomination.NOTRUMP),
+                    Bid(4, Denomination.HEARTS),
+                    Bid(5, Denomination.CLUBS),
+                    Bid(5, Denomination.DIAMONDS),
+                ],
+            ),
+            (
+                Bid(3, Denomination.HEARTS),
+                [
+                    Bid(3, Denomination.NOTRUMP),
+                    Bid(4, Denomination.SPADES),
+                    Bid(5, Denomination.CLUBS),
+                    Bid(5, Denomination.DIAMONDS),
+                ],
+            )
+        )
+        for response, expected_candidates in cases:
+            with self.subTest(response=response):
+                seen_candidates: list[Call] = []
+
+                def evaluate(candidates: Sequence[Call]) -> Call:
+                    seen_candidates.extend(candidates)
+                    return Bid(3, Denomination.NOTRUMP)
+
+                decision = self.module.choose(
+                    _auction_context(
+                        HandProfile(16, (4, 3, 3, 3)),
+                        (
+                            Bid(1, Denomination.NOTRUMP),
+                            PassCall.PASS,
+                            response,
+                            PassCall.PASS,
+                        ),
+                        Seat.NORTH,
+                        simulation_evaluator=evaluate,
+                    )
+                )
+                self.assertEqual(
+                    _selected_call(decision),
+                    Bid(3, Denomination.NOTRUMP),
+                )
+                self.assertEqual(seen_candidates, expected_candidates)
+
+    def test_run_auction_executes_simulation_for_pbn_deals(self) -> None:
+        system = CompositeBiddingSystem(
+            "stayman-test",
+            "1.0.0",
+            "Stayman test",
+            (
+                load_module(ROOT / "systems/modules/standard-openings.toml"),
+                self.module,
+            ),
+            PassCall.PASS,
+        )
+        board = PBNBoard(
+            1,
+            Seat.NORTH,
+            Vulnerability.NONE,
+            {
+                Seat.NORTH: CardHand(("AKQ7", "A43", "K32", "432")),
+                Seat.EAST: CardHand(("JT85", "JT9", "AQT", "987")),
+                Seat.SOUTH: CardHand(("96", "KQ2", "J98765", "Q5")),
+                Seat.WEST: CardHand(("432", "8765", "4", "AKJT6")),
+            },
+        )
+        expected_call = Bid(3, Denomination.NOTRUMP)
+        with patch(
+            "bridge_sim.model_assistant.rate_candidate_calls",
+            return_value=(
+                CallRating(PassCall.PASS, 0.0),
+                CallRating(expected_call, 1.0),
+            ),
+        ) as rate_calls:
+            result = run_auction(
+                board,
+                system,
+                system,
+                simulation_n=1,
+                simulation_seed=12345,
+            )
+
+        self.assertIn(AuctionEntry(Seat.NORTH, expected_call), result.entries)
+        rate_calls.assert_called_once()
+        self.assertEqual(rate_calls.call_args.kwargs["n"], 1)
+        self.assertEqual(rate_calls.call_args.kwargs["seed"], 12345)
+        self.assertEqual(
+            rate_calls.call_args.kwargs["candidates"],
+            (PassCall.PASS, expected_call),
         )
 
 

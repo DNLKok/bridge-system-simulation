@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 
 from .deals import Vulnerability
 from .model import (
@@ -33,6 +33,7 @@ class DecisionContext:
     seat: Seat
     dealer: Seat
     vulnerability: Vulnerability
+    simulation_evaluator: Callable[[Sequence[Call]], Call] | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class RuleCondition:
     has_stopper: bool | None = None
     nonjump_new_suit_overcall: bool = False
     suit_overcall_tiers: tuple[tuple[int, int, int], ...] = ()
+    after_opening_calls: tuple[Call, ...] | None = None
 
     def matches(self, context: DecisionContext) -> bool:
         if not self.matches_public_context(context):
@@ -173,6 +175,19 @@ class RuleCondition:
         return True
 
     def matches_public_context(self, context: DecisionContext) -> bool:
+        if self.after_opening_calls is not None:
+            opening_index = next(
+                (
+                    index
+                    for index, entry in enumerate(context.auction)
+                    if entry.call is not PassCall.PASS
+                ),
+                None,
+            )
+            if opening_index is None or tuple(
+                entry.call for entry in context.auction[opening_index + 1 :]
+            ) != self.after_opening_calls:
+                return False
         if self.passout_seat is not None and (
             _is_passout_seat(context.auction) is not self.passout_seat
         ):
@@ -305,11 +320,29 @@ class BiddingRule:
     condition: RuleCondition
     preferred_calls: tuple[Call, ...]
     explanation: str | None = None
+    evaluate_calls: bool = False
 
     def decide(self, context: DecisionContext, module_id: str) -> ModuleDecision | None:
         if not self.condition.matches(context):
             return None
-        call = self._selected_call(context)
+        if self.evaluate_calls:
+            if context.simulation_evaluator is None:
+                raise RuntimeError(
+                    f"Rule {self.rule_id!r} requires a simulation evaluator."
+                )
+            candidates = tuple(
+                call for call in self.preferred_calls if call in context.legal_calls
+            )
+            if not candidates:
+                return None
+            call = context.simulation_evaluator(candidates)
+            if call not in candidates:
+                raise RuntimeError(
+                    f"Simulation for rule {self.rule_id!r} returned "
+                    f"unconfigured call {call!s}."
+                )
+        else:
+            call = self._selected_call(context)
         if call is None:
             return None
         return ModuleDecision(call, module_id, self.rule_id, self.explanation)
@@ -320,6 +353,8 @@ class BiddingRule:
         observed_call: Call,
     ) -> DealerCallCondition:
         if not self.condition.matches_public_context(context):
+            return DealerCallCondition()
+        if self.evaluate_calls:
             return DealerCallCondition()
         if self.condition.suit_overcall_tiers:
             return self._dealer_suit_overcall_condition(context, observed_call)
@@ -842,7 +877,12 @@ def _parse_rule(
     if not isinstance(value, dict):
         raise ValueError(f"Module rule {index} must be a TOML table.")
     required = {"id", "when"}
-    allowed = required | {"call", "try_calls", "explanation"}
+    allowed = required | {
+        "call",
+        "try_calls",
+        "evaluate_calls",
+        "explanation",
+    }
     missing = required - set(value)
     unknown = set(value) - allowed
     if missing or unknown:
@@ -852,9 +892,13 @@ def _parse_rule(
         if unknown:
             details.append(f"unknown keys: {', '.join(sorted(unknown))}")
         raise ValueError(f"Invalid module rule {index} ({'; '.join(details)}).")
-    if ("call" in value) == ("try_calls" in value):
+    call_modes = sum(
+        key in value for key in ("call", "try_calls", "evaluate_calls")
+    )
+    if call_modes != 1:
         raise ValueError(
-            f"Module rule {index} must define exactly one of call or try_calls."
+            f"Module rule {index} must define exactly one of call, try_calls, "
+            "or evaluate_calls."
         )
 
     rule_id = value["id"]
@@ -862,8 +906,18 @@ def _parse_rule(
         raise ValueError(f"Module rule {index} id must be a non-empty string.")
     raw_condition = value["when"]
     condition = _parse_condition(raw_condition, index, strength_ranges)
+    evaluate_calls = "evaluate_calls" in value
     if "call" in value:
         preferred_calls = (_parse_call(value["call"]),)
+    elif evaluate_calls:
+        raw_calls = value["evaluate_calls"]
+        if not isinstance(raw_calls, list) or not raw_calls:
+            raise ValueError(
+                f"Module rule {index} evaluate_calls must be a non-empty array."
+            )
+        preferred_calls = tuple(_parse_call(call) for call in raw_calls)
+        if len(set(preferred_calls)) != len(preferred_calls):
+            raise ValueError(f"Module rule {index} has duplicate evaluate_calls.")
     else:
         raw_calls = value["try_calls"]
         if not isinstance(raw_calls, list) or not raw_calls:
@@ -891,7 +945,13 @@ def _parse_rule(
     explanation = value.get("explanation")
     if explanation is not None and not isinstance(explanation, str):
         raise ValueError(f"Module rule {index} explanation must be a string.")
-    return BiddingRule(rule_id, condition, preferred_calls, explanation)
+    return BiddingRule(
+        rule_id,
+        condition,
+        preferred_calls,
+        explanation,
+        evaluate_calls,
+    )
 
 
 def _parse_condition(
@@ -923,6 +983,7 @@ def _parse_condition(
         "has_stopper",
         "nonjump_new_suit_overcall",
         "suit_overcall_tiers",
+        "after_opening_calls",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -1027,6 +1088,14 @@ def _parse_condition(
         value.get("suit_overcall_tiers"),
         index,
     )
+    after_opening_calls: tuple[Call, ...] | None = None
+    if "after_opening_calls" in value:
+        raw_calls = value["after_opening_calls"]
+        if not isinstance(raw_calls, list):
+            raise ValueError(
+                f"Module rule {index} after_opening_calls must be an array."
+            )
+        after_opening_calls = tuple(_parse_call(call) for call in raw_calls)
     if suit_overcall_tiers and not nonjump_new_suit_overcall:
         raise ValueError(
             f"Module rule {index} suit_overcall_tiers require "
@@ -1087,6 +1156,7 @@ def _parse_condition(
         has_stopper=has_stopper,
         nonjump_new_suit_overcall=nonjump_new_suit_overcall,
         suit_overcall_tiers=suit_overcall_tiers,
+        after_opening_calls=after_opening_calls,
         **suit_length_values,
     )
 
@@ -1405,11 +1475,12 @@ def _matches_partner_opening(
     if (
         not isinstance(opening_entry.call, Bid)
         or opening_entry.call not in opening_calls
-        or opening_entry.seat.next.next is not context.seat
+        or not _same_partnership(opening_entry.seat, context.seat)
     ):
         return False
     if require_uncontested and any(
         entry.call is not PassCall.PASS
+        and not _same_partnership(entry.seat, opening_entry.seat)
         for entry in context.auction[opening_index + 1 :]
     ):
         return False

@@ -37,6 +37,7 @@ class StandardTestReportTests(unittest.TestCase):
 
         self.assertEqual(settings.deal_count, 16)
         self.assertEqual(settings.seed, 1_795_000_123)
+        self.assertEqual(settings.decision_simulation_n, 64)
         self.assertFalse(settings.advanced_out_of_book)
         self.assertEqual(
             settings.north_south_system,
@@ -69,10 +70,15 @@ class StandardTestReportTests(unittest.TestCase):
                 CONFIG.read_text(encoding="utf-8").replace(
                     'seed = "unix"',
                     "seed = 20261128",
+                ).replace(
+                    "decision_simulation_n = 64",
+                    "decision_simulation_n = 3",
                 ),
                 encoding="utf-8",
             )
-            self.assertEqual(load_settings(config).seed, 20261128)
+            settings = load_settings(config)
+            self.assertEqual(settings.seed, 20261128)
+            self.assertEqual(settings.decision_simulation_n, 3)
 
     def test_standard_board_rotation_repeats_after_sixteen_boards(self) -> None:
         expected_vulnerability = (
@@ -215,6 +221,10 @@ class StandardTestReportTests(unittest.TestCase):
 
         self.assertIn("Deals:</span> 16", html)
         self.assertIn(f"Dealer seed:</span> {settings.seed}", html)
+        self.assertIn(
+            f"Decision simulation N:</span> {settings.decision_simulation_n}",
+            " ".join(html.split()),
+        )
         self.assertIn("Advanced out-of-book logic:</span> Disabled", html)
         self.assertIn("Standard 16-board rotation", html)
         self.assertIn("North-South (STD)", html)

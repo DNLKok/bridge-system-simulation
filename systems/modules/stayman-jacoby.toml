@@ -1,7 +1,7 @@
 schema_version = 1
 kind = "module"
 id = "stayman-jacoby"
-version = "1.0.0"
+version = "1.1.0"
 name = "Stayman-Jacoby"
 
 partner_opening_calls = ["1NT"]
@@ -18,6 +18,7 @@ id = "4h-transfer-to-spades"
 call = "4H"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 suit = "spades"
 min_suit_length = 6
@@ -27,6 +28,7 @@ id = "4d-transfer-to-hearts"
 call = "4D"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 suit = "hearts"
 min_suit_length = 6
@@ -36,6 +38,7 @@ id = "3s-with-1-3-5-4"
 call = "3S"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 
 [rules.when.suit_lengths.spades]
@@ -59,6 +62,7 @@ id = "3s-with-1-3-4-5"
 call = "3S"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 
 [rules.when.suit_lengths.spades]
@@ -82,6 +86,7 @@ id = "3h-with-3-1-5-4"
 call = "3H"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 
 [rules.when.suit_lengths.spades]
@@ -105,6 +110,7 @@ id = "3h-with-3-1-4-5"
 call = "3H"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 
 [rules.when.suit_lengths.spades]
@@ -128,6 +134,7 @@ id = "3d-invitational-with-six-card-diamonds"
 call = "3D"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Invitational"]
 suit = "diamonds"
 min_suit_length = 6
@@ -138,6 +145,7 @@ id = "3c-weak-gf-or-slam-interest-with-six-card-diamonds"
 call = "3C"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Weak", "GF", "Slam interest"]
 suit = "diamonds"
 min_suit_length = 6
@@ -148,6 +156,7 @@ id = "3nt-gf-without-four-card-major"
 call = "3NT"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 suit_lengths = { spades = { max = 3 }, hearts = { max = 3 } }
 
@@ -156,6 +165,7 @@ id = "3nt-gf-with-4333-shape"
 call = "3NT"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["GF"]
 shapes = ["4333"]
 
@@ -164,6 +174,7 @@ id = "2nt-invitational-without-four-card-major"
 call = "2NT"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Invitational"]
 suit_lengths = { spades = { max = 3 }, hearts = { max = 3 } }
 
@@ -172,6 +183,7 @@ id = "2nt-invitational-with-4333-shape"
 call = "2NT"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Invitational"]
 shapes = ["4333"]
 
@@ -180,6 +192,7 @@ id = "2s-with-six-card-clubs"
 call = "2S"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 suit = "clubs"
 min_suit_length = 6
 max_outside_major_length = 3
@@ -189,6 +202,7 @@ id = "2c-invitational-gf-or-slam-interest-with-four-card-spades"
 call = "2C"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Invitational", "GF", "Slam interest"]
 suit = "spades"
 min_suit_length = 4
@@ -198,6 +212,7 @@ id = "2c-invitational-gf-or-slam-interest-with-four-card-hearts"
 call = "2C"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Invitational", "GF", "Slam interest"]
 suit = "hearts"
 min_suit_length = 4
@@ -207,6 +222,7 @@ id = "2c-weak-with-five-spades-and-four-hearts"
 call = "2C"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Weak"]
 suit_lengths = { spades = { min = 5 }, hearts = { min = 4 } }
 
@@ -215,6 +231,7 @@ id = "2c-weak-with-four-spades-and-five-hearts"
 call = "2C"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 strengths = ["Weak"]
 suit_lengths = { spades = { min = 4 }, hearts = { min = 5 } }
 
@@ -223,6 +240,7 @@ id = "2h-with-five-card-spades"
 call = "2H"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 suit = "spades"
 min_suit_length = 5
 
@@ -231,5 +249,357 @@ id = "2d-with-five-card-hearts"
 call = "2D"
 
 [rules.when]
+after_opening_calls = ["PASS"]
 suit = "hearts"
 min_suit_length = 5
+
+[[rules]]
+id = "opener-completes-spade-transfer"
+call = "4S"
+
+[rules.when]
+after_opening_calls = ["PASS", "4H", "PASS"]
+
+[[rules]]
+id = "responder-passes-spade-transfer-completion"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "4H", "PASS", "4S", "PASS"]
+
+[[rules]]
+id = "opener-completes-heart-transfer"
+call = "4H"
+
+[rules.when]
+after_opening_calls = ["PASS", "4D", "PASS"]
+
+[[rules]]
+id = "responder-passes-heart-transfer-completion"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "4D", "PASS", "4H", "PASS"]
+
+[[rules]]
+id = "opener-passes-three-notrump-response"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "3NT", "PASS"]
+
+[[rules]]
+id = "opener-passes-fifteen-over-two-notrump"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "2NT", "PASS"]
+min_hcp = 15
+max_hcp = 15
+
+[[rules]]
+id = "opener-raises-sixteen-seventeen-over-two-notrump"
+call = "3NT"
+
+[rules.when]
+after_opening_calls = ["PASS", "2NT", "PASS"]
+min_hcp = 16
+max_hcp = 17
+
+[[rules]]
+id = "simulate-over-three-spades"
+evaluate_calls = ["3NT", "4H", "5C", "5D"]
+
+[rules.when]
+after_opening_calls = ["PASS", "3S", "PASS"]
+
+[[rules]]
+id = "simulate-over-three-hearts"
+evaluate_calls = ["3NT", "4S", "5C", "5D"]
+
+[rules.when]
+after_opening_calls = ["PASS", "3H", "PASS"]
+
+[[rules]]
+id = "simulate-three-notrump-versus-three-diamonds"
+evaluate_calls = ["PASS", "3NT"]
+
+[rules.when]
+after_opening_calls = ["PASS", "3D", "PASS"]
+
+[[rules]]
+id = "opener-relays-three-clubs-to-three-diamonds"
+call = "3D"
+
+[rules.when]
+after_opening_calls = ["PASS", "3C", "PASS"]
+
+[[rules]]
+id = "weak-responder-passes-three-diamond-relay"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
+strengths = ["Weak"]
+
+[[rules]]
+id = "responder-shows-spade-shortage-after-three-club-relay"
+call = "3S"
+
+[rules.when]
+after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.spades]
+max = 1
+
+[[rules]]
+id = "responder-shows-heart-shortage-after-three-club-relay"
+call = "3H"
+
+[rules.when]
+after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.hearts]
+max = 1
+
+[[rules]]
+id = "gf-responder-without-major-shortage-bids-three-notrump"
+call = "3NT"
+
+[rules.when]
+after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
+strengths = ["GF"]
+
+[rules.when.suit_lengths.spades]
+min = 2
+
+[rules.when.suit_lengths.hearts]
+min = 2
+
+[[rules]]
+id = "slam-responder-with-club-shortage-bids-four-clubs"
+call = "4C"
+
+[rules.when]
+after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
+strengths = ["Slam interest"]
+
+[rules.when.suit_lengths.clubs]
+max = 1
+
+[[rules]]
+id = "slam-responder-without-shortage-bids-four-diamonds"
+call = "4D"
+
+[rules.when]
+after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
+strengths = ["Slam interest"]
+
+[rules.when.suit_lengths.spades]
+min = 2
+
+[rules.when.suit_lengths.hearts]
+min = 2
+
+[rules.when.suit_lengths.diamonds]
+min = 2
+
+[rules.when.suit_lengths.clubs]
+min = 2
+
+[[rules]]
+id = "opener-chooses-two-notrump-with-club-queen"
+call = "2NT"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS"]
+suit = "clubs"
+min_suit_length = 3
+min_suit_hcp = 2
+
+[[rules]]
+id = "opener-otherwise-relays-two-spades-to-three-clubs"
+call = "3C"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS"]
+
+[[rules]]
+id = "weak-responder-passes-three-club-relay-after-two-spades"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+strengths = ["Weak"]
+
+[[rules]]
+id = "invitational-responder-passes-three-club-relay-after-two-spades"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+strengths = ["Invitational"]
+
+[[rules]]
+id = "slam-or-gf-responder-shows-diamond-shortage-over-three-clubs"
+call = "3D"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.diamonds]
+max = 1
+
+[[rules]]
+id = "slam-or-gf-responder-shows-heart-shortage-over-three-clubs"
+call = "3H"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.hearts]
+max = 1
+
+[[rules]]
+id = "slam-or-gf-responder-shows-spade-shortage-over-three-clubs"
+call = "3S"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.spades]
+max = 1
+
+[[rules]]
+id = "gf-responder-without-shortage-bids-three-notrump-over-three-clubs"
+call = "3NT"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+strengths = ["GF"]
+
+[rules.when.suit_lengths.spades]
+min = 2
+
+[rules.when.suit_lengths.hearts]
+min = 2
+
+[rules.when.suit_lengths.diamonds]
+min = 2
+
+[rules.when.suit_lengths.clubs]
+min = 2
+
+[[rules]]
+id = "slam-responder-without-shortage-bids-four-clubs-over-three-clubs"
+call = "4C"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+strengths = ["Slam interest"]
+
+[rules.when.suit_lengths.spades]
+min = 2
+
+[rules.when.suit_lengths.hearts]
+min = 2
+
+[rules.when.suit_lengths.diamonds]
+min = 2
+
+[rules.when.suit_lengths.clubs]
+min = 2
+
+[[rules]]
+id = "weak-responder-bids-three-clubs-over-two-notrump"
+call = "3C"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+strengths = ["Weak"]
+
+[[rules]]
+id = "invitational-responder-bids-three-notrump-over-two-notrump"
+call = "3NT"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+strengths = ["Invitational"]
+
+[[rules]]
+id = "gf-responder-shows-diamond-shortage-over-two-notrump"
+call = "3D"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.diamonds]
+max = 1
+
+[[rules]]
+id = "gf-responder-shows-heart-shortage-over-two-notrump"
+call = "3H"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.hearts]
+max = 1
+
+[[rules]]
+id = "gf-responder-shows-spade-shortage-over-two-notrump"
+call = "3S"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+strengths = ["GF", "Slam interest"]
+
+[rules.when.suit_lengths.spades]
+max = 1
+
+[[rules]]
+id = "gf-responder-without-shortage-bids-three-notrump-over-two-notrump"
+call = "3NT"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+strengths = ["GF"]
+
+[rules.when.suit_lengths.spades]
+min = 2
+
+[rules.when.suit_lengths.hearts]
+min = 2
+
+[rules.when.suit_lengths.diamonds]
+min = 2
+
+[rules.when.suit_lengths.clubs]
+min = 2
+
+[[rules]]
+id = "slam-responder-without-shortage-bids-four-clubs-over-two-notrump"
+call = "4C"
+
+[rules.when]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+strengths = ["Slam interest"]
+
+[rules.when.suit_lengths.spades]
+min = 2
+
+[rules.when.suit_lengths.hearts]
+min = 2
+
+[rules.when.suit_lengths.diamonds]
+min = 2
+
+[rules.when.suit_lengths.clubs]
+min = 2

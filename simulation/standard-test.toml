@@ -3,6 +3,7 @@ schema_version = 1
 [simulation]
 deal_count = 16
 seed = "unix"
+decision_simulation_n = 64
 advanced_out_of_book = false
 output_directory = "../reports"
 

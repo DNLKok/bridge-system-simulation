@@ -65,10 +65,14 @@ when HCP plus the lengths of the two longest suits total at least 20, then
 handles balanced notrump and strong openings before choosing a longest-suit
 1-level opening. Its standalone system is
 [systems/standard-openings.toml](systems/standard-openings.toml).
-The initial [Stayman-Jacoby module](systems/modules/stayman-jacoby.toml) applies
-on responder's first turn after partner opens 1NT, provided no non-pass call
-has intervened. It declares its reusable HCP ranges at the top: Weak 0-7,
-Invitational 8, GF 9-14, and Slam interest 15+.
+The [Stayman-Jacoby module](systems/modules/stayman-jacoby.toml) applies after
+partner opens 1NT while the opponents pass. It declares reusable HCP ranges at
+the top: Weak 0-7, Invitational 8, GF 9-14, and Slam interest 15+. Its
+specified transfers and relays are handled directly; after 2♠, responder shows
+the cheapest legal diamond/heart/spade shortage, or bids 3NT with GF and 4♣
+with slam interest when without shortage. The opener's choices after 3♦, 3♥,
+and 3♠ are evaluated with sampled deals and double-dummy scores against par.
+Continuations after 2♣, 2♦, and 2♥ remain to be specified.
 
 ## Standard bidding-system test
 
@@ -76,9 +80,10 @@ Invitational 8, GF 9-14, and Slam interest 15+.
 openings, traditional preempts, and simple overcalls (including its takeout
 doubles), in that priority order. The same composite system is assigned to
 North-South and East-West in [simulation/standard-test.toml](simulation/standard-test.toml).
-Edit that settings file to change the deal count, seed, systems, abbreviations,
-or output directory. Dealer and vulnerability follow the standard 16-board
-cycle, then repeat: dealer rotates North-East-South-West, and vulnerability
+Edit that settings file to change the deal count, seed, decision simulation
+sample size, systems, abbreviations, or output directory. Dealer and
+vulnerability follow the standard 16-board cycle, then repeat: dealer rotates
+North-East-South-West, and vulnerability
 cycles None, NS, EW, All, NS, EW, All, None, EW, All, None, NS, All, None, NS,
 EW. Advanced out-of-book logic is disabled and the runner rejects settings
 that enable it. Run the test with:
@@ -87,17 +92,21 @@ that enable it. Run the test with:
 python -m bridge_sim.standard_test
 ```
 
-The default run uses the current Unix timestamp in seconds as its seed, so
-separate runs started in different seconds use different seeds. To reproduce a
-run, replace `seed = "unix"` in the settings file with its reported integer
-seed. It generates 16 deals and writes a timestamped PDF under `reports/`, named
+The default run uses the current Unix timestamp in seconds as its seed for both
+deal generation and simulated bidding, so separate runs started in different
+seconds use different seeds. The default sample size for each simulated
+decision is 64. To reproduce a run, replace `seed = "unix"` in the settings
+file with its reported integer seed. It generates 16 deals and writes a
+timestamped PDF under `reports/`, named
 `YYYYMMDD_HHMMSS_NS-<abbr>_EW-<abbr>.pdf`. The PDF starts with the systems and
 settings, then shows each complete deal as a compass hand diagram beside its
 complete auction. PDF rendering requires Chromium on `PATH`.
 
-If `run_auction` encounters an out-of-book decision, it raises a clear error
-instead of silently inventing a call; provide that auction context to the
-model-assistant command to get a rated recommendation.
+Simulation-based bidding requires complete PBN deals; `run_auction` reports an
+error if such a rule is used with profile-only deals. Other out-of-book
+decisions still raise a clear error instead of silently inventing a call;
+provide that auction context to the model-assistant command to get a rated
+recommendation.
 
 ## Generating deals with `dealer`
 

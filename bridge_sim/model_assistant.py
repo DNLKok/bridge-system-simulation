@@ -32,9 +32,14 @@ from .model import (
 )
 from .par import TrickTable, calculate_par_result
 from .scoring import calculate_score_ns
-from .systems import DecisionContext, OutOfBookDecision, load_system
+from .systems import (
+    CompositeBiddingSystem,
+    DecisionContext,
+    OutOfBookDecision,
+    load_system,
+)
 
-DEFAULT_N = 64
+DEFAULT_N = _auction.DEFAULT_SIMULATION_N
 
 
 class _BoardProvider(Protocol):
@@ -80,13 +85,74 @@ class CallRating:
     note: str | None = None
 
 
+def rate_candidate_calls(
+    *,
+    perspective: Seat,
+    hand: CardHand,
+    auction: Sequence[AuctionEntry],
+    partner_system: str | Path | CompositeBiddingSystem,
+    opponent_system: str | Path | CompositeBiddingSystem,
+    dealer: Seat,
+    vulnerability: Vulnerability,
+    candidates: Sequence[Call],
+    n: int = DEFAULT_N,
+    seed: int,
+    generate: int = DEFAULT_GENERATE_LIMIT,
+    dealer_provider: _BoardProvider | None = None,
+    dds_solver: _TrickTableSolver | None = None,
+    unconstrained_entries: Sequence[int] = (),
+) -> tuple[CallRating, ...]:
+    """Rate only the supplied legal calls against par on a sampled auction."""
+    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+        raise ValueError("seed must be a non-negative integer.")
+    if not candidates or len(set(candidates)) != len(candidates):
+        raise ValueError("candidates must be a non-empty sequence without duplicates.")
+    legal_calls, standing_contract = _auction_state(
+        auction,
+        dealer,
+        perspective,
+    )
+    illegal_candidates = set(candidates) - legal_calls
+    if illegal_candidates:
+        raise ValueError(
+            "Cannot simulate illegal call(s): "
+            + ", ".join(str(call) for call in illegal_candidates)
+            + "."
+        )
+    provider = dealer_provider if dealer_provider is not None else DealerProvider()
+    solver = dds_solver if dds_solver is not None else TablesPBN4Solver()
+    boards, trick_tables = _sample_auction_boards(
+        perspective=perspective,
+        hand=hand,
+        auction=auction,
+        partner_system=partner_system,
+        opponent_system=opponent_system,
+        dealer=dealer,
+        vulnerability=vulnerability,
+        n=n,
+        seed=seed,
+        generate=generate,
+        provider=provider,
+        solver=solver,
+        unconstrained_entries=unconstrained_entries,
+    )
+    return _rate_calls(
+        boards,
+        trick_tables,
+        frozenset(candidates),
+        standing_contract,
+        perspective,
+        auction,
+    )
+
+
 def run_model_assistant(
     *,
     perspective: Seat,
     hand: CardHand,
     auction: Sequence[AuctionEntry],
-    partner_system: str | Path,
-    opponent_system: str | Path,
+    partner_system: str | Path | CompositeBiddingSystem,
+    opponent_system: str | Path | CompositeBiddingSystem,
     dealer: Seat,
     vulnerability: Vulnerability,
     n: int = DEFAULT_N,
@@ -104,8 +170,12 @@ def run_model_assistant(
         raise TypeError("advanced must be a bool.")
     provider = dealer_provider if dealer_provider is not None else DealerProvider()
     solver = dds_solver if dds_solver is not None else TablesPBN4Solver()
-    system = load_system(partner_system)
-    script = generate_dealer_script(
+    system = (
+        partner_system
+        if isinstance(partner_system, CompositeBiddingSystem)
+        else load_system(partner_system)
+    )
+    boards, trick_tables = _sample_auction_boards(
         perspective=perspective,
         hand=hand,
         auction=auction,
@@ -113,41 +183,39 @@ def run_model_assistant(
         opponent_system=opponent_system,
         dealer=dealer,
         vulnerability=vulnerability,
-        produce=n,
+        n=n,
+        seed=seed,
         generate=generate,
+        provider=provider,
+        solver=solver,
         unconstrained_entries=unconstrained_entries,
     )
-
-    with tempfile.TemporaryDirectory(prefix="bridge-model-assistant-") as directory:
-        script_path = Path(directory) / "model-assistant.dealer"
-        script_path.write_text(script, encoding="utf-8")
-        boards = tuple(provider.generate(script_path, seed=seed))
-
-    if len(boards) != n:
-        raise RuntimeError(
-            f"Dealer produced {len(boards)} boards; requested exactly {n}. "
-            "Increase the generate limit or relax the auction constraints."
-        )
-    _validate_generated_boards(
-        boards,
-        perspective=perspective,
-        hand=hand,
-        dealer=dealer,
-        vulnerability=vulnerability,
-    )
-
-    trick_tables = solver.solve_trick_tables(boards)
-    if len(trick_tables) != n:
-        raise RuntimeError(
-            f"Double dummy solver returned {len(trick_tables)} trick tables "
-            f"for {n} boards."
-        )
 
     legal_calls, standing_contract = _auction_state(
         auction,
         dealer,
         perspective,
     )
+
+    def evaluate_candidates(candidates: Sequence[Call]) -> Call:
+        ratings = rate_candidate_calls(
+            perspective=perspective,
+            hand=hand,
+            auction=auction,
+            partner_system=partner_system,
+            opponent_system=opponent_system,
+            dealer=dealer,
+            vulnerability=vulnerability,
+            candidates=candidates,
+            n=n,
+            seed=seed,
+            generate=generate,
+            dealer_provider=provider,
+            dds_solver=solver,
+            unconstrained_entries=unconstrained_entries,
+        )
+        return _highest_rated_call(candidates, ratings)
+
     system_decision = system.choose_call(
         DecisionContext(
             hand=hand.profile,
@@ -156,6 +224,7 @@ def run_model_assistant(
             seat=perspective,
             dealer=dealer,
             vulnerability=vulnerability,
+            simulation_evaluator=evaluate_candidates,
         )
     )
     out_of_book = system_decision is OutOfBookDecision.OUT_OF_BOOK
@@ -174,6 +243,7 @@ def run_model_assistant(
         legal_calls,
         standing_contract,
         perspective,
+        auction,
     )
     if advanced and out_of_book:
         advanced_calls = _advanced_candidate_calls(legal_calls)
@@ -223,6 +293,73 @@ def run_model_assistant(
     )
 
 
+def _sample_auction_boards(
+    *,
+    perspective: Seat,
+    hand: CardHand,
+    auction: Sequence[AuctionEntry],
+    partner_system: str | Path | CompositeBiddingSystem,
+    opponent_system: str | Path | CompositeBiddingSystem,
+    dealer: Seat,
+    vulnerability: Vulnerability,
+    n: int,
+    seed: int,
+    generate: int,
+    provider: _BoardProvider,
+    solver: _TrickTableSolver,
+    unconstrained_entries: Sequence[int],
+) -> tuple[
+    tuple[PBNBoard, ...],
+    tuple[TrickTable, ...],
+]:
+    script = generate_dealer_script(
+        perspective=perspective,
+        hand=hand,
+        auction=auction,
+        partner_system=partner_system,
+        opponent_system=opponent_system,
+        dealer=dealer,
+        vulnerability=vulnerability,
+        produce=n,
+        generate=generate,
+        unconstrained_entries=unconstrained_entries,
+    )
+    with tempfile.TemporaryDirectory(prefix="bridge-model-assistant-") as directory:
+        script_path = Path(directory) / "model-assistant.dealer"
+        script_path.write_text(script, encoding="utf-8")
+        boards = tuple(provider.generate(script_path, seed=seed))
+
+    if len(boards) != n:
+        raise RuntimeError(
+            f"Dealer produced {len(boards)} boards; requested exactly {n}. "
+            "Increase the generate limit or relax the auction constraints."
+        )
+    _validate_generated_boards(
+        boards,
+        perspective=perspective,
+        hand=hand,
+        dealer=dealer,
+        vulnerability=vulnerability,
+    )
+    trick_tables = solver.solve_trick_tables(boards)
+    if len(trick_tables) != n:
+        raise RuntimeError(
+            f"Double dummy solver returned {len(trick_tables)} trick tables "
+            f"for {n} boards."
+        )
+    return boards, trick_tables
+
+
+def _highest_rated_call(
+    candidates: Sequence[Call],
+    ratings: Sequence[CallRating],
+) -> Call:
+    by_call = {rating.call: rating.expected_imps for rating in ratings}
+    if any(call not in by_call for call in candidates):
+        raise RuntimeError("The simulation did not rate every candidate call.")
+    return max(candidates, key=lambda call: by_call[call])
+
+
 def _validate_generated_boards(
     boards: Sequence[PBNBoard],
     *,
@@ -255,8 +392,8 @@ def _generate_advanced_outer_board(
     perspective: Seat,
     hand: CardHand,
     auction: Sequence[AuctionEntry],
-    partner_system: str | Path,
-    opponent_system: str | Path,
+    partner_system: str | Path | CompositeBiddingSystem,
+    opponent_system: str | Path | CompositeBiddingSystem,
     dealer: Seat,
     vulnerability: Vulnerability,
     generate: int,
@@ -365,6 +502,7 @@ def _rate_calls(
     legal_calls: frozenset[Call],
     standing_contract: Contract | None,
     perspective: Seat,
+    auction: Sequence[AuctionEntry],
 ) -> tuple[CallRating, ...]:
     call_scores: dict[Call, list[int]] = {
         call: [] for call in sorted(legal_calls, key=_call_order)
@@ -383,6 +521,7 @@ def _rate_calls(
                 board.vulnerability,
                 perspective,
                 standing_contract,
+                auction,
             )
             imps_ns = calculate_imps(score_ns - par_score_ns)
             scores.append(
@@ -412,8 +551,8 @@ def _rate_calls_with_partner_simulations(
     calls: Sequence[Call],
     perspective: Seat,
     auction: Sequence[AuctionEntry],
-    partner_system: str | Path,
-    opponent_system: str | Path,
+    partner_system: str | Path | CompositeBiddingSystem,
+    opponent_system: str | Path | CompositeBiddingSystem,
     dealer: Seat,
     vulnerability: Vulnerability,
     n: int,
@@ -513,6 +652,7 @@ def _score_call_ns(
     vulnerability: Vulnerability,
     perspective: Seat,
     standing_contract: Contract | None,
+    auction: Sequence[AuctionEntry] = (),
 ) -> int:
     if call is PassCall.PASS:
         if standing_contract is None:
@@ -522,12 +662,23 @@ def _score_call_ns(
         if trick_delta < 0 and contract.multiplier == 1:
             contract = replace(contract, multiplier=2)
     elif isinstance(call, Bid):
-        declarer_tricks = trick_table[call.denomination][perspective]
+        declaring_side = perspective in (Seat.NORTH, Seat.SOUTH)
+        declarer = next(
+            (
+                entry.seat
+                for entry in auction
+                if (entry.seat in (Seat.NORTH, Seat.SOUTH)) is declaring_side
+                and isinstance(entry.call, Bid)
+                and entry.call.denomination is call.denomination
+            ),
+            perspective,
+        )
+        declarer_tricks = trick_table[call.denomination][declarer]
         trick_delta = declarer_tricks - (call.level + 6)
         contract = Contract(
             call.level,
             call.denomination,
-            perspective,
+            declarer,
             multiplier=2 if trick_delta < 0 else 1,
         )
     elif call is DoubleCall.DOUBLE:
