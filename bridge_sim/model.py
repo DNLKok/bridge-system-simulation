@@ -214,12 +214,24 @@ class ParResult:
     contract: Contract | None
     trick_delta: int | None
     score_ns: int
+    alternative_contracts: tuple[Contract, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.score_ns, int) or isinstance(self.score_ns, bool):
             raise ValueError("A par score must be an integer.")
         if self.contract is not None and not isinstance(self.contract, Contract):
             raise TypeError("A par contract must be a Contract.")
+        if not isinstance(self.alternative_contracts, tuple) or any(
+            not isinstance(contract, Contract)
+            for contract in self.alternative_contracts
+        ):
+            raise TypeError("Alternative par contracts must be a tuple of Contracts.")
+        if (
+            (self.contract is None and self.alternative_contracts)
+            or self.contract in self.alternative_contracts
+            or len(set(self.alternative_contracts)) != len(self.alternative_contracts)
+        ):
+            raise ValueError("Alternative par contracts must be unique par contracts.")
         if (self.contract is None) != (self.trick_delta is None):
             raise ValueError("Par contract and trick delta must be provided together.")
         if self.trick_delta is not None and (
@@ -230,6 +242,12 @@ class ParResult:
             raise ValueError("A par trick delta must be an integer between -13 and 13.")
         if self.contract is None and self.score_ns != 0:
             raise ValueError("A passed-out par must have a score of zero.")
+
+    @property
+    def contracts(self) -> tuple[Contract, ...]:
+        if self.contract is None:
+            return ()
+        return (self.contract, *self.alternative_contracts)
 
 
 @dataclass(frozen=True)

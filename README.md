@@ -158,8 +158,10 @@ start afterward. The table includes auction outcomes and double-dummy contract
 and game availability rates. Deal-based percentages include passed-out boards,
 which are also listed separately. Statistics that require double-dummy results
 are calculated in one batch with the workspace `TablesPBN4` solver. Each deal
-is shown as a compass hand diagram beside its complete auction. PDF rendering
-requires Chromium on `PATH`.
+shows a compass hand diagram, a double-dummy tricks table, the PAR score from
+North-South's perspective with all tied PAR contracts, and its complete
+auction. Double-dummy tables are included for passed-out deals as well. PDF
+rendering requires Chromium on `PATH`.
 
 ### Conditional auction tests
 

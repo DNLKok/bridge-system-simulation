@@ -110,6 +110,56 @@ class ParScoreTests(unittest.TestCase):
             ParResult(None, None, 0),
         )
 
+    def test_returns_all_making_contracts_tied_at_par_score(self) -> None:
+        table = _trick_table(
+            (
+                (6, 6, 6, 6),
+                (6, 6, 6, 6),
+                (6, 6, 6, 6),
+                (11, 6, 11, 6),
+                (9, 6, 9, 6),
+            )
+        )
+
+        result = calculate_par_result(table, Seat.NORTH, Vulnerability.NONE)
+
+        self.assertEqual(result.contract, Contract(3, Denomination.NOTRUMP, Seat.NORTH))
+        self.assertEqual(
+            result.alternative_contracts,
+            (Contract(5, Denomination.CLUBS, Seat.NORTH),),
+        )
+        self.assertEqual(
+            result.contracts,
+            (
+                Contract(3, Denomination.NOTRUMP, Seat.NORTH),
+                Contract(5, Denomination.CLUBS, Seat.NORTH),
+            ),
+        )
+        self.assertEqual(result.score_ns, 400)
+
+    def test_returns_tied_sacrifice_contracts(self) -> None:
+        table = _trick_table(
+            (
+                (8, 4, 8, 5),
+                (7, 8, 10, 10),
+                (10, 6, 10, 5),
+                (6, 4, 11, 9),
+                (4, 6, 9, 10),
+            )
+        )
+
+        result = calculate_par_result(table, Seat.NORTH, Vulnerability.NONE)
+
+        self.assertEqual(
+            result.contract,
+            Contract(5, Denomination.HEARTS, Seat.WEST, multiplier=2),
+        )
+        self.assertEqual(
+            result.alternative_contracts,
+            (Contract(5, Denomination.NOTRUMP, Seat.WEST, multiplier=2),),
+        )
+        self.assertEqual(result.score_ns, 100)
+
 
 if __name__ == "__main__":
     unittest.main()

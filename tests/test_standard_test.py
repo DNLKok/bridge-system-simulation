@@ -365,6 +365,15 @@ class StandardTestReportTests(unittest.TestCase):
         statistics = (
             _ReportStatistic("Test statistic", 1, "deals", 1),
         )
+        trick_table = {
+            denomination: {seat: 6 for seat in Seat}
+            for denomination in Denomination
+        }
+        trick_table[Denomination.CLUBS][Seat.NORTH] = 11
+        trick_table[Denomination.CLUBS][Seat.SOUTH] = 11
+        trick_table[Denomination.NOTRUMP][Seat.NORTH] = 9
+        trick_table[Denomination.NOTRUMP][Seat.SOUTH] = 9
+        trick_tables = {board.board_number: trick_table}
         html = _report_html(
             settings,
             load_system(settings.north_south_system),
@@ -372,6 +381,7 @@ class StandardTestReportTests(unittest.TestCase):
             (result,),
             datetime(2026, 11, 28, 10, 12, 42, tzinfo=timezone.utc),
             statistics=statistics,
+            trick_tables=trick_tables,
         )
 
         self.assertIn("Deals:</span> 16", html)
@@ -390,10 +400,21 @@ class StandardTestReportTests(unittest.TestCase):
         self.assertIn("5432", html)
         self.assertIn("1NT", html)
         self.assertIn("Result: 1NT by S", html)
+        self.assertIn("Double-dummy tricks", html)
+        self.assertIn("PAR score (NS):</strong>\n    +400", html)
+        self.assertIn("3NT by N; 5C by N", html)
         self.assertIn("Outcome statistics", html)
         self.assertIn("Test statistic", html)
         self.assertIn("page-break-after: always", html)
         self.assertLess(html.index("</header>"), html.index("Board 1"))
+        self.assertLess(
+            html.index('<div class="deal-layout">'),
+            html.index('<section class="double-dummy">'),
+        )
+        self.assertLess(
+            html.index('<section class="double-dummy">'),
+            html.index('<section class="auction">'),
+        )
 
         conditional_settings = load_settings(CONDITIONAL_CONFIG)
         conditional_html = _report_html(
@@ -403,6 +424,7 @@ class StandardTestReportTests(unittest.TestCase):
             (result,),
             datetime(2026, 11, 28, 10, 12, 42, tzinfo=timezone.utc),
             statistics=statistics,
+            trick_tables=trick_tables,
             dealer_seeds=(20261128,),
         )
         self.assertIn("Condition label:</span> SJ-2S", conditional_html)
@@ -530,7 +552,7 @@ class StandardTestReportTests(unittest.TestCase):
             (1, 4),
         )
 
-    def test_report_statistics_batch_dds_for_contracts_and_use_zero_percentages(self) -> None:
+    def test_report_statistics_batch_dds_for_all_deals_and_use_zero_percentages(self) -> None:
         boards = (_statistics_board(1), _statistics_board(2))
         results = (
             BoardAuction(
@@ -545,10 +567,13 @@ class StandardTestReportTests(unittest.TestCase):
         }
 
         with patch("bridge_sim.standard_test.TablesPBN4Solver") as solver_class:
-            solver_class.return_value.solve_trick_tables.return_value = (trick_table,)
+            solver_class.return_value.solve_trick_tables.return_value = (
+                trick_table,
+                trick_table,
+            )
             statistics = _calculate_report_statistics(results)
 
-        solver_class.return_value.solve_trick_tables.assert_called_once_with((boards[0],))
+        solver_class.return_value.solve_trick_tables.assert_called_once_with(boards)
         statistics_by_label = {
             statistic.label: statistic for statistic in statistics
         }

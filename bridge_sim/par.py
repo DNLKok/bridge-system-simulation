@@ -50,7 +50,7 @@ def calculate_par_result(
     dealer: Seat,
     vulnerability: Vulnerability,
 ) -> ParResult:
-    """Return one dealer-specific double-dummy par contract and NS score.
+    """Return a dealer-specific double-dummy par result and all tied contracts.
 
     The table maps each denomination to the tricks available to each seat.
     """
@@ -115,14 +115,17 @@ def calculate_par_result(
     sacrifice_found = False
     best_making_contract: _Candidate | None = None
     best_sacrifice: _SacrificeOption | None = None
+    best_plus_contracts: list[_Candidate] = []
+    best_sacrifice_options: list[_SacrificeOption] = []
     for candidate in candidate_contracts:
-        sacrifice = _best_sacrifice(
+        sacrifices = _best_sacrifices(
             trick_table,
             candidate,
             opponent_by_denomination,
             primacy,
             dealer,
         )
+        sacrifice = sacrifices[0] if sacrifices else None
         down = 9999 if sacrifice is None else sacrifice.undertricks
         down_limit = _affordable_sacrifice(
             candidate.score,
@@ -134,18 +137,22 @@ def calculate_par_result(
             if down > best_down:
                 best_down = down
                 best_sacrifice = sacrifice
+                best_sacrifice_options = list(sacrifices)
+            elif down == best_down:
+                best_sacrifice_options.extend(sacrifices)
         else:
-            if (
-                candidate.score > best_plus
-                or (
-                    candidate.score == best_plus
-                    and best_making_contract is not None
-                    and candidate.contract_number
-                    < best_making_contract.contract_number
-                )
-            ):
+            if candidate.score > best_plus:
                 best_plus = candidate.score
                 best_making_contract = candidate
+                best_plus_contracts = [candidate]
+            elif candidate.score == best_plus:
+                best_plus_contracts.append(candidate)
+                if (
+                    best_making_contract is not None
+                    and candidate.contract_number
+                    < best_making_contract.contract_number
+                ):
+                    best_making_contract = candidate
 
     sacrifice_score_ns = _sacrifice_score_ns(
         best_down,
@@ -161,7 +168,21 @@ def calculate_par_result(
             best_making_contract.declarer,
         )
         score_ns = best_plus if primacy == 0 else -best_plus
-        return _scored_par_result(contract, 0, vulnerability, score_ns)
+        alternative_contracts = tuple(
+            Contract(candidate.tricks - 6, candidate.denomination, candidate.declarer)
+            for candidate in sorted(
+                best_plus_contracts,
+                key=lambda option: option.contract_number,
+            )
+            if candidate is not best_making_contract
+        )
+        return _scored_par_result(
+            contract,
+            0,
+            vulnerability,
+            score_ns,
+            alternative_contracts,
+        )
     if best_sacrifice is None:
         return ParResult(None, None, 0)
     return _scored_par_result(
@@ -169,6 +190,13 @@ def calculate_par_result(
         best_sacrifice.trick_delta,
         vulnerability,
         sacrifice_score_ns,
+        tuple(
+            dict.fromkeys(
+                option.contract
+                for option in best_sacrifice_options
+                if option.contract != best_sacrifice.contract
+            )
+        ),
     )
 
 
@@ -186,13 +214,14 @@ def _scored_par_result(
     trick_delta: int,
     vulnerability: Vulnerability,
     expected_score_ns: int,
+    alternative_contracts: tuple[Contract, ...] = (),
 ) -> ParResult:
     score_ns = calculate_score_ns(contract, vulnerability, trick_delta)
     if score_ns != expected_score_ns:
         raise RuntimeError(
             "Calculated par contract does not produce the calculated par score."
         )
-    return ParResult(contract, trick_delta, score_ns)
+    return ParResult(contract, trick_delta, score_ns, alternative_contracts)
 
 
 def _validate_table(trick_table: TrickTable) -> None:
@@ -240,14 +269,14 @@ def _make_side_candidates(
     return tuple(candidates)
 
 
-def _best_sacrifice(
+def _best_sacrifices(
     trick_table: TrickTable,
     candidate: _Candidate,
     opponent_by_denomination: Mapping[Denomination, _Candidate],
     declaring_side: int,
     dealer: Seat,
-) -> _SacrificeOption | None:
-    best: _SacrificeOption | None = None
+) -> tuple[_SacrificeOption, ...]:
+    best: list[_SacrificeOption] = []
     for denomination in _BID_ORDER:
         opponent_contract = opponent_by_denomination[denomination]
         if denomination == candidate.denomination:
@@ -277,9 +306,11 @@ def _best_sacrifice(
         for option in options:
             if opponent_contract.contract_number + 5 * option.undertricks > 35:
                 continue
-            if best is None or option.undertricks < best.undertricks:
-                best = option
-    return best
+            if not best or option.undertricks < best[0].undertricks:
+                best = [option]
+            elif option.undertricks == best[0].undertricks:
+                best.append(option)
+    return tuple(best)
 
 
 def _same_denomination_sacrifices(

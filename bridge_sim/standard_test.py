@@ -31,6 +31,7 @@ from .model import (
     Seat,
 )
 from .model_assistant import _auction_state
+from .par import calculate_par_result
 from .systems import (
     CompositeBiddingSystem,
     DecisionContext,
@@ -110,6 +111,10 @@ class StandardTestSettings:
 class BoardAuction:
     board: PBNBoard
     auction: AuctionResult
+
+
+_TrickTable = Mapping[Denomination, Mapping[Seat, int]]
+_TrickTablesByBoard = Mapping[int, _TrickTable]
 
 
 @dataclass(frozen=True)
@@ -281,7 +286,11 @@ def _run_standard_test(
             north_south,
             east_west,
         )
-        statistics = _calculate_report_statistics(results)
+        trick_tables = _calculate_report_trick_tables(results)
+        statistics = _calculate_report_statistics(
+            results,
+            trick_tables=trick_tables,
+        )
         document = _report_html(
             settings,
             north_south,
@@ -289,6 +298,7 @@ def _run_standard_test(
             results,
             generated_at,
             statistics=statistics,
+            trick_tables=trick_tables,
             dealer_seeds=dealer_seeds,
         )
         _render_pdf(document, output_path)
@@ -328,7 +338,11 @@ def _run_standard_test(
         )
         for board in boards
     )
-    statistics = _calculate_report_statistics(results)
+    trick_tables = _calculate_report_trick_tables(results)
+    statistics = _calculate_report_statistics(
+        results,
+        trick_tables=trick_tables,
+    )
     document = _report_html(
         settings,
         north_south,
@@ -336,6 +350,7 @@ def _run_standard_test(
         results,
         generated_at,
         statistics=statistics,
+        trick_tables=trick_tables,
     )
     _render_pdf(document, output_path)
     return output_path
@@ -677,30 +692,33 @@ def _output_filename(
 
 def _calculate_report_statistics(
     results: Sequence[BoardAuction],
+    *,
+    trick_tables: _TrickTablesByBoard | None = None,
 ) -> tuple[_ReportStatistic, ...]:
-    contracted_results = tuple(
-        result for result in results if result.auction.contract is not None
-    )
+    if trick_tables is None:
+        trick_tables = _calculate_report_trick_tables(results)
+    return _build_report_statistics(results, trick_tables)
+
+
+def _calculate_report_trick_tables(
+    results: Sequence[BoardAuction],
+) -> dict[int, dict[Denomination, dict[Seat, int]]]:
     trick_tables = TablesPBN4Solver().solve_trick_tables(
-        tuple(result.board for result in contracted_results)
+        tuple(result.board for result in results)
     )
-    tables_by_board = {
+    return {
         result.board.board_number: trick_table
         for result, trick_table in zip(
-            contracted_results,
+            results,
             trick_tables,
             strict=True,
         )
     }
-    return _build_report_statistics(results, tables_by_board)
 
 
 def _build_report_statistics(
     results: Sequence[BoardAuction],
-    trick_tables: Mapping[
-        int,
-        Mapping[Denomination, Mapping[Seat, int]],
-    ],
+    trick_tables: _TrickTablesByBoard,
 ) -> tuple[_ReportStatistic, ...]:
     outcomes: list[_ContractOutcome] = []
     for result in results:
@@ -897,6 +915,7 @@ def _report_html(
     generated_at: datetime,
     *,
     statistics: Sequence[_ReportStatistic],
+    trick_tables: _TrickTablesByBoard,
     dealer_seeds: Sequence[int] | None = None,
 ) -> str:
     system_details = (
@@ -912,7 +931,11 @@ def _report_html(
         ),
     )
     boards = "\n".join(
-        _board_html(result, first=index == 0)
+        _board_html(
+            result,
+            first=index == 0,
+            trick_table=trick_tables[result.board.board_number],
+        )
         for index, result in enumerate(results)
     )
     statistic_rows = "\n".join(
@@ -983,10 +1006,13 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
 .hand.east {{ grid-area: 2 / 3; }}
 .hand.south {{ grid-area: 3 / 2; }}
 .suit-row {{ display: grid; grid-template-columns: 6mm 1fr; font-family: "Liberation Mono", monospace; font-size: 8.5pt; white-space: nowrap; }}
-.auction {{ margin-top: 5mm; max-width: 125mm; }}
-.auction table {{ border-collapse: collapse; width: 100%; }}
-.auction th, .auction td {{ border: 1px solid #aebdc7; padding: 1.2mm 3mm; text-align: center; }}
-.auction th {{ background: #edf3f6; }}
+.double-dummy {{ margin-top: 3mm; max-width: 125mm; }}
+.double-dummy table, .auction table {{ border-collapse: collapse; width: 100%; }}
+.double-dummy th, .double-dummy td, .auction th, .auction td {{ border: 1px solid #aebdc7; padding: 1.2mm 3mm; text-align: center; }}
+.double-dummy thead th, .auction th {{ background: #edf3f6; }}
+.double-dummy tbody th {{ text-align: left; }}
+.par-summary {{ margin: 2mm 0 0; max-width: 125mm; }}
+.auction {{ margin-top: 3mm; max-width: 125mm; }}
 .auction th.vulnerable {{ background: #b00020; color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 .contract {{ font-weight: bold; margin-top: 2mm; }}
 .small {{ color: #536978; font-size: 8.5pt; }}
@@ -1045,7 +1071,12 @@ def _system_html(
     )
 
 
-def _board_html(result: BoardAuction, *, first: bool) -> str:
+def _board_html(
+    result: BoardAuction,
+    *,
+    first: bool,
+    trick_table: _TrickTable,
+) -> str:
     board = result.board
     dealer = html.escape(board.dealer.name.title())
     vulnerability = html.escape(board.vulnerability.value)
@@ -1059,6 +1090,14 @@ def _board_html(result: BoardAuction, *, first: bool) -> str:
         _hand_html(board, seat, seat.name.lower())
         for seat in (Seat.NORTH, Seat.WEST, Seat.EAST, Seat.SOUTH)
     )
+    par_result = calculate_par_result(
+        trick_table,
+        board.dealer,
+        board.vulnerability,
+    )
+    par_contracts = "; ".join(
+        html.escape(str(contract)) for contract in par_result.contracts
+    ) or "Passed out"
     rows = _auction_rows(result.auction)
     headers = _auction_headers(board.vulnerability)
     return f"""\
@@ -1069,6 +1108,11 @@ def _board_html(result: BoardAuction, *, first: bool) -> str:
     <span>Vulnerability: {vulnerability}</span>
   </div>
   <div class="deal-layout">{hands}</div>
+  {_double_dummy_table_html(trick_table)}
+  <p class="par-summary"><strong>PAR score (NS):</strong>
+    {par_result.score_ns:+d}
+    &nbsp; <strong>Contract(s):</strong> {par_contracts}
+  </p>
   <section class="auction">
     <h3>Auction</h3>
     <table>
@@ -1078,6 +1122,39 @@ def _board_html(result: BoardAuction, *, first: bool) -> str:
     <p class="contract">Result: {contract}</p>
   </section>
 </article>
+"""
+
+
+def _double_dummy_table_html(trick_table: _TrickTable) -> str:
+    strains = (
+        (Denomination.NOTRUMP, "NT"),
+        (Denomination.SPADES, "♠"),
+        (Denomination.HEARTS, "♥"),
+        (Denomination.DIAMONDS, "♦"),
+        (Denomination.CLUBS, "♣"),
+    )
+    headers = "".join(
+        f'<th scope="col">{seat.value}</th>'
+        for seat in (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST)
+    )
+    rows = "".join(
+        "<tr>"
+        f'<th scope="row">{strain}</th>'
+        + "".join(
+            f"<td>{trick_table[denomination][seat]}</td>"
+            for seat in (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST)
+        )
+        + "</tr>"
+        for denomination, strain in strains
+    )
+    return f"""\
+<section class="double-dummy">
+  <h3>Double-dummy tricks</h3>
+  <table>
+    <thead><tr><th scope="col">Strain</th>{headers}</tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+</section>
 """
 
 
