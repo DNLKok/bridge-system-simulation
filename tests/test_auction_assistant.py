@@ -12,10 +12,45 @@ ONE_NT_SYSTEM = ROOT / "systems" / "one-no-trump-15-17.toml"
 PASSOUT_SYSTEM = ROOT / "systems" / "passout-cheapest-call.toml"
 PREEMPT_SYSTEM = ROOT / "systems" / "traditional-preempts.toml"
 SIMPLE_OVERCALL_SYSTEM = ROOT / "systems" / "simple-overcalls.toml"
+STANDARD_OPENINGS_SYSTEM = ROOT / "systems" / "standard-openings.toml"
 HAND = CardHand(("AKQ", "JT9", "876", "5432"))
 
 
 class AuctionAssistantTests(unittest.TestCase):
+    def test_standard_opening_dealer_constraints_enforce_rule_of_20_and_suit_choice(
+        self,
+    ) -> None:
+        script = generate_dealer_script(
+            perspective=Seat.EAST,
+            hand=HAND,
+            auction=(AuctionEntry(Seat.NORTH, Bid(1, Denomination.SPADES)),),
+            partner_system=STANDARD_OPENINGS_SYSTEM,
+            opponent_system=STANDARD_OPENINGS_SYSTEM,
+            dealer=Seat.NORTH,
+            vulnerability=Vulnerability.NONE,
+            generate=1_000_000,
+        )
+
+        self.assertIn(
+            "((hcp(north) + spades(north) + hearts(north)) >= 20)",
+            script,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "standard-opening.dealer"
+            path.write_text(script, encoding="utf-8")
+            board = next(DealerProvider().generate(path))
+
+        hand = board.hands[Seat.NORTH]
+        spades, hearts, diamonds, clubs = hand.shape
+        rule_of_20 = hand.hcp + sum(sorted(hand.shape, reverse=True)[:2])
+        self.assertGreaterEqual(rule_of_20, 20)
+        self.assertGreaterEqual(spades, 5)
+        self.assertFalse(
+            (hearts >= 5 and hearts > spades)
+            or (diamonds >= 4 and diamonds > spades)
+            or (clubs >= 2 and clubs > spades)
+        )
+
     def test_generates_predeal_and_positive_rule_constraint_for_prior_bid(self) -> None:
         script = generate_dealer_script(
             perspective=Seat.EAST,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 from enum import Enum
+from itertools import combinations
 from pathlib import Path
 from typing import Protocol, Sequence
 
@@ -53,6 +54,7 @@ class DealerCallCondition:
 class RuleCondition:
     min_hcp: int | None = None
     max_hcp: int | None = None
+    min_rule_of_20: int | None = None
     shapes: frozenset[tuple[int, int, int, int]] | None = None
     passout_seat: bool | None = None
     no_contract_bid: bool | None = None
@@ -67,6 +69,7 @@ class RuleCondition:
     suit_lengths: tuple[
         tuple[Denomination, int | None, int | None], ...
     ] = ()
+    suit_opening_min_lengths: tuple[tuple[Denomination, int], ...] = ()
     stopper_suit: Denomination | None = None
     has_stopper: bool | None = None
     nonjump_new_suit_overcall: bool = False
@@ -79,6 +82,10 @@ class RuleCondition:
             return False
         if self.max_hcp is not None and context.hand.hcp > self.max_hcp:
             return False
+        if self.min_rule_of_20 is not None:
+            top_two_suits = sorted(context.hand.shape, reverse=True)[:2]
+            if context.hand.hcp + sum(top_two_suits) < self.min_rule_of_20:
+                return False
         if self.shapes is not None and context.hand.canonical_shape not in self.shapes:
             return False
         for suit, minimum, maximum in self.suit_lengths:
@@ -178,6 +185,17 @@ class RuleCondition:
             expressions.append(f"(hcp({seat_name}) >= {self.min_hcp})")
         if self.max_hcp is not None:
             expressions.append(f"(hcp({seat_name}) <= {self.max_hcp})")
+        if self.min_rule_of_20 is not None:
+            expressions.append(
+                "("
+                + " || ".join(
+                    f"((hcp({seat_name}) + {_SUIT_NAMES[first]}({seat_name}) + "
+                    f"{_SUIT_NAMES[second]}({seat_name})) >= "
+                    f"{self.min_rule_of_20})"
+                    for first, second in combinations(_SUIT_ORDER, 2)
+                )
+                + ")"
+            )
         if self.shapes is not None:
             shape_options = " + ".join(
                 f"any {''.join(str(length) for length in shape)}"
@@ -288,6 +306,8 @@ class BiddingRule:
             return DealerCallCondition()
         if self.condition.suit_overcall_tiers:
             return self._dealer_suit_overcall_condition(context, observed_call)
+        if self.condition.suit_opening_min_lengths:
+            return self._dealer_suit_opening_condition(context, observed_call)
         expected_call = self._selected_call(context)
         if expected_call is None:
             return DealerCallCondition()
@@ -301,6 +321,28 @@ class BiddingRule:
         return DealerCallCondition((f"!({expression})",))
 
     def _selected_call(self, context: DecisionContext) -> Call | None:
+        if self.condition.suit_opening_min_lengths:
+            tie_order = self.condition.suit_tie_order
+            if tie_order is None:
+                raise RuntimeError("Suit opening choices must define a tie order.")
+            minimum_lengths = dict(self.condition.suit_opening_min_lengths)
+            candidates = [
+                call
+                for call in self.preferred_calls
+                if isinstance(call, Bid)
+                and call in context.legal_calls
+                and call.denomination in minimum_lengths
+                and context.hand.shape[_SUIT_ORDER.index(call.denomination)]
+                >= minimum_lengths[call.denomination]
+            ]
+            return min(
+                candidates,
+                key=lambda call: (
+                    -context.hand.shape[_SUIT_ORDER.index(call.denomination)],
+                    tie_order.index(call.denomination),
+                ),
+                default=None,
+            )
         if self.condition.suit_overcall_tiers:
             tie_order = self.condition.suit_tie_order
             if tie_order is None:
@@ -387,6 +429,65 @@ class BiddingRule:
             comparison = (
                 f"({other_length} >= {observed_length})"
                 if is_preferred
+                else f"({other_length} > {observed_length})"
+            )
+            higher_priority.append(f"(({expression}) && {comparison})")
+        selection = f"({qualifiers[observed_call]})"
+        if higher_priority:
+            selection += " && !(" + " || ".join(higher_priority) + ")"
+        if common is not None:
+            selection = f"({common}) && ({selection})"
+        return DealerCallCondition((selection,), selects_call=True)
+
+    def _dealer_suit_opening_condition(
+        self,
+        context: DecisionContext,
+        observed_call: Call,
+    ) -> DealerCallCondition:
+        tie_order = self.condition.suit_tie_order
+        if tie_order is None:
+            raise RuntimeError("Suit opening choices must define a tie order.")
+        minimum_lengths = dict(self.condition.suit_opening_min_lengths)
+        candidates = tuple(
+            call
+            for call in self.preferred_calls
+            if isinstance(call, Bid)
+            and call in context.legal_calls
+            and call.denomination in minimum_lengths
+        )
+        seat_name = _SEAT_NAMES[context.seat]
+        qualifiers = {
+            call: (
+                f"({_SUIT_NAMES[call.denomination]}({seat_name}) >= "
+                f"{minimum_lengths[call.denomination]})"
+            )
+            for call in candidates
+        }
+        common = self.condition.dealer_expression(context.seat)
+        if observed_call not in qualifiers:
+            all_qualifiers = " || ".join(
+                f"({expression})" for expression in qualifiers.values()
+            )
+            if not all_qualifiers:
+                return DealerCallCondition()
+            active = (
+                f"({common}) && ({all_qualifiers})"
+                if common is not None
+                else f"({all_qualifiers})"
+            )
+            return DealerCallCondition((f"!({active})",))
+
+        observed_suit = observed_call.denomination
+        observed_length = f"{_SUIT_NAMES[observed_suit]}({seat_name})"
+        higher_priority: list[str] = []
+        for call, expression in qualifiers.items():
+            if call == observed_call:
+                continue
+            other_suit = call.denomination
+            other_length = f"{_SUIT_NAMES[other_suit]}({seat_name})"
+            comparison = (
+                f"({other_length} >= {observed_length})"
+                if tie_order.index(other_suit) < tie_order.index(observed_suit)
                 else f"({other_length} > {observed_length})"
             )
             higher_priority.append(f"(({expression}) && {comparison})")
@@ -719,6 +820,23 @@ def _parse_rule(value: object, index: int) -> BiddingRule:
         preferred_calls = tuple(_parse_call(call) for call in raw_calls)
         if len(set(preferred_calls)) != len(preferred_calls):
             raise ValueError(f"Module rule {index} has duplicate try_calls.")
+    if condition.suit_opening_min_lengths:
+        opening_suits = {
+            call.denomination
+            for call in preferred_calls
+            if isinstance(call, Bid) and call.level == 1
+        }
+        configured_suits = {
+            suit for suit, _ in condition.suit_opening_min_lengths
+        }
+        if (
+            len(opening_suits) != len(preferred_calls)
+            or opening_suits != configured_suits
+        ):
+            raise ValueError(
+                f"Module rule {index} suit opening lengths must match its "
+                "level-one suit try_calls."
+            )
     explanation = value.get("explanation")
     if explanation is not None and not isinstance(explanation, str):
         raise ValueError(f"Module rule {index} explanation must be a string.")
@@ -731,6 +849,7 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
     allowed = {
         "min_hcp",
         "max_hcp",
+        "min_rule_of_20",
         "shapes",
         "passout_seat",
         "no_contract_bid",
@@ -743,6 +862,7 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
         "longest_qualifying_suit_min_length",
         "suit_tie_order",
         "suit_lengths",
+        "suit_opening_min_lengths",
         "stopper_suit",
         "has_stopper",
         "nonjump_new_suit_overcall",
@@ -763,6 +883,12 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
             value.get("min_hcp"),
             value.get("max_hcp"),
         )
+    min_rule_of_20 = _parse_integer_condition(
+        value,
+        "min_rule_of_20",
+        0,
+        50,
+    )
 
     shapes: frozenset[tuple[int, int, int, int]] | None = None
     if "shapes" in value:
@@ -814,6 +940,10 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
                 f"Module rule {index} suit_tie_order must not repeat a suit."
             )
     suit_lengths = _parse_suit_lengths(value.get("suit_lengths"), index)
+    suit_opening_min_lengths = _parse_suit_opening_min_lengths(
+        value.get("suit_opening_min_lengths"),
+        index,
+    )
     raw_stopper_suit = value.get("stopper_suit")
     stopper_suit: Denomination | None = None
     if raw_stopper_suit is not None:
@@ -845,6 +975,10 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
         raise ValueError(
             f"Module rule {index} suit_overcall_tiers require suit_tie_order."
         )
+    if suit_opening_min_lengths and suit_tie_order is None:
+        raise ValueError(
+            f"Module rule {index} suit_opening_min_lengths require suit_tie_order."
+        )
     if any(item is not None for item in suit_length_values.values()) and suit is None:
         raise ValueError(f"Module rule {index} suit conditions require a suit.")
     if (
@@ -870,6 +1004,7 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
         suit_tie_order is not None
         and suit_length_values["longest_qualifying_suit_min_length"] is None
         and not suit_overcall_tiers
+        and not suit_opening_min_lengths
     ):
         raise ValueError(
             "suit_tie_order requires a longest-suit or suit-overcall condition."
@@ -877,6 +1012,7 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
     return RuleCondition(
         min_hcp=min_hcp,
         max_hcp=max_hcp,
+        min_rule_of_20=min_rule_of_20,
         shapes=shapes,
         passout_seat=passout_seat,
         no_contract_bid=no_contract_bid,
@@ -884,6 +1020,7 @@ def _parse_condition(value: object, index: int) -> RuleCondition:
         suit=suit,
         suit_tie_order=suit_tie_order,
         suit_lengths=suit_lengths,
+        suit_opening_min_lengths=suit_opening_min_lengths,
         stopper_suit=stopper_suit,
         has_stopper=has_stopper,
         nonjump_new_suit_overcall=nonjump_new_suit_overcall,
@@ -953,6 +1090,36 @@ def _parse_suit_lengths(
         lengths.append((suit, minimum, maximum))
     if len({suit for suit, _, _ in lengths}) != len(lengths):
         raise ValueError(f"Module rule {index} suit_lengths repeats a suit.")
+    return tuple(lengths)
+
+
+def _parse_suit_opening_min_lengths(
+    value: object,
+    index: int,
+) -> tuple[tuple[Denomination, int], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, dict) or not value:
+        raise ValueError(
+            f"Module rule {index} suit_opening_min_lengths must be a non-empty table."
+        )
+    lengths: list[tuple[Denomination, int]] = []
+    for suit_name, minimum in value.items():
+        if not isinstance(suit_name, str):
+            raise ValueError(
+                f"Module rule {index} suit opening keys must be suit names."
+            )
+        suit = _parse_suit(suit_name, index)
+        if (
+            not isinstance(minimum, int)
+            or isinstance(minimum, bool)
+            or not 1 <= minimum <= 13
+        ):
+            raise ValueError(
+                f"Module rule {index} suit opening minimum lengths must be "
+                "integers from 1 to 13."
+            )
+        lengths.append((suit, minimum))
     return tuple(lengths)
 
 

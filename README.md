@@ -60,6 +60,11 @@ then prefers S-H-D-C. Suit overcalls show 5+ cards; they require 9+ HCP at the
 cards or 11+ with six at the 3-level, with a 17-HCP maximum. It also defines
 balanced notrump overcalls/doubles and takeout doubles. Card-derived profiles
 include the suit-honor details needed to evaluate stopper rules.
+The [standard openings module](systems/modules/standard-openings.toml) opens
+when HCP plus the lengths of the two longest suits total at least 20, then
+handles balanced notrump and strong openings before choosing a longest-suit
+1-level opening. Its standalone system is
+[systems/standard-openings.toml](systems/standard-openings.toml).
 If `run_auction` encounters an out-of-book decision, it raises a clear error
 instead of silently inventing a call; provide that auction context to the
 model-assistant command to get a rated recommendation.

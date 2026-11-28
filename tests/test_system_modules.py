@@ -23,6 +23,18 @@ ONE_NT_MODULE = ROOT / "systems" / "modules" / "open-1nt-balanced-15-17.toml"
 PASSOUT_SYSTEM = ROOT / "systems" / "passout-cheapest-call.toml"
 PREEMPT_SYSTEM = ROOT / "systems" / "traditional-preempts.toml"
 SIMPLE_OVERCALL_SYSTEM = ROOT / "systems" / "simple-overcalls.toml"
+STANDARD_OPENINGS_SYSTEM = ROOT / "systems" / "standard-openings.toml"
+
+
+def _standard_opening_legal_calls() -> frozenset[Call]:
+    return frozenset(
+        {
+            PassCall.PASS,
+            *(Bid(1, suit) for suit in Denomination),
+            Bid(2, Denomination.CLUBS),
+            Bid(2, Denomination.NOTRUMP),
+        }
+    )
 
 
 def context(
@@ -148,6 +160,48 @@ def _simple_overcall_context(
 
 
 class BiddingModuleTests(unittest.TestCase):
+    def test_standard_openings_apply_rule_of_20_and_call_priorities(self) -> None:
+        system = load_system(STANDARD_OPENINGS_SYSTEM)
+        legal_calls = _standard_opening_legal_calls()
+        cases = (
+            (HandProfile(12, (4, 3, 3, 3)), PassCall.PASS),
+            (HandProfile(12, (4, 4, 3, 2)), Bid(1, Denomination.CLUBS)),
+            (HandProfile(12, (5, 3, 3, 2)), Bid(1, Denomination.CLUBS)),
+            (HandProfile(15, (4, 3, 3, 3)), Bid(1, Denomination.NOTRUMP)),
+            (HandProfile(17, (5, 3, 3, 2)), Bid(1, Denomination.NOTRUMP)),
+            (HandProfile(18, (4, 4, 3, 2)), Bid(1, Denomination.CLUBS)),
+            (HandProfile(18, (5, 3, 3, 2)), Bid(1, Denomination.SPADES)),
+            (HandProfile(20, (4, 4, 3, 2)), Bid(2, Denomination.NOTRUMP)),
+            (HandProfile(22, (4, 3, 3, 3)), Bid(2, Denomination.CLUBS)),
+            (HandProfile(9, (5, 6, 1, 1)), Bid(1, Denomination.HEARTS)),
+            (HandProfile(10, (5, 5, 2, 1)), Bid(1, Denomination.SPADES)),
+            (HandProfile(12, (4, 1, 4, 4)), Bid(1, Denomination.DIAMONDS)),
+            (HandProfile(18, (2, 1, 3, 7)), Bid(1, Denomination.CLUBS)),
+        )
+        for hand, expected in cases:
+            with self.subTest(hand=hand):
+                self.assertEqual(
+                    system.choose_call(
+                        context(hand, (), legal_calls, Seat.NORTH)
+                    ),
+                    expected,
+                )
+
+    def test_standard_openings_do_not_reopen_after_a_contract_bid(self) -> None:
+        system = load_system(STANDARD_OPENINGS_SYSTEM)
+        auction = (AuctionEntry(Seat.NORTH, Bid(1, Denomination.DIAMONDS)),)
+        self.assertIs(
+            system.choose_call(
+                context(
+                    HandProfile(22, (4, 3, 3, 3)),
+                    auction,
+                    _standard_opening_legal_calls(),
+                    Seat.EAST,
+                )
+            ),
+            PassCall.PASS,
+        )
+
     def test_composed_system_uses_ordered_modules_then_explicit_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             system_path = _write_test_system(Path(directory))

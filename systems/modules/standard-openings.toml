@@ -1,0 +1,68 @@
+schema_version = 1
+kind = "module"
+id = "standard-openings"
+version = "1.0.0"
+name = "Standard openings"
+
+[[rules]]
+id = "open-1nt"
+call = "1NT"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+min_hcp = 15
+max_hcp = 17
+shapes = ["4333", "4432", "5332"]
+
+[[rules]]
+id = "open-2nt"
+call = "2NT"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+min_hcp = 20
+max_hcp = 21
+shapes = ["4333", "4432", "5332"]
+
+[[rules]]
+id = "open-2c-with-22-plus"
+call = "2C"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+min_hcp = 22
+
+[[rules]]
+id = "open-1c-balanced-12-to-14"
+call = "1C"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+min_hcp = 12
+max_hcp = 14
+shapes = ["4333", "4432", "5332"]
+
+[[rules]]
+id = "open-1c-balanced-18-to-19-without-five-card-suit"
+call = "1C"
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+min_hcp = 18
+max_hcp = 19
+shapes = ["4333", "4432"]
+
+[[rules]]
+id = "open-longest-suit"
+try_calls = ["1S", "1H", "1D", "1C"]
+
+[rules.when]
+no_contract_bid = true
+min_rule_of_20 = 20
+suit_opening_min_lengths = { spades = 5, hearts = 5, diamonds = 4, clubs = 2 }
+suit_tie_order = ["spades", "hearts", "diamonds", "clubs"]
