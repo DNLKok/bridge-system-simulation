@@ -43,7 +43,7 @@ call = "4H"
 
 [rules.when]
 after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "2NT", "PASS"]
-game_force = true
+auction_strength = "game_forcing"
 suit_lengths = { hearts = { min = 3 } }
 
 [[rules]]
@@ -52,7 +52,7 @@ evaluate_calls = ["PASS", "3H", "3NT", "4H"]
 
 [rules.when]
 after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS", "2NT", "PASS"]
-game_force = false
+auction_strength = "game_might_still_be_possible"
 suit_lengths = { hearts = { min = 3 } }
 
 [[rules]]
@@ -69,7 +69,7 @@ call = "4S"
 
 [rules.when]
 after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "2NT", "PASS"]
-game_force = true
+auction_strength = "game_forcing"
 suit_lengths = { spades = { min = 3 } }
 
 [[rules]]
@@ -78,7 +78,7 @@ evaluate_calls = ["PASS", "3S", "3NT", "4S"]
 
 [rules.when]
 after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS", "2NT", "PASS"]
-game_force = false
+auction_strength = "game_might_still_be_possible"
 suit_lengths = { spades = { min = 3 } }
 
 [[rules]]

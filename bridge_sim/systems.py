@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from itertools import combinations
+from itertools import combinations, permutations
 from pathlib import Path
-from typing import Callable, Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 
 from .deals import Vulnerability
 from .model import (
@@ -25,6 +25,41 @@ class OutOfBookDecision(str, Enum):
     OUT_OF_BOOK = "OUT_OF_BOOK"
 
 
+class AuctionStrength(str, Enum):
+    GAME_FORCING = "game_forcing"
+    GAME_MIGHT_STILL_BE_POSSIBLE = "game_might_still_be_possible"
+    GAME_NO_LONGER_POSSIBLE = "game_no_longer_possible"
+
+
+class PublicFitState(str, Enum):
+    FIT_ESTABLISHED = "fit_established"
+    FIT_UNKNOWN = "fit_unknown"
+    FIT_REJECTED = "fit_rejected"
+
+
+class PrivateFitState(str, Enum):
+    FIT = "fit"
+    NOT_YET_KNOWN = "not_yet_known"
+    NO_FIT = "no_fit"
+
+
+@dataclass(frozen=True)
+class SuitLengthRange:
+    minimum: int = 0
+    maximum: int = 13
+
+
+@dataclass(frozen=True)
+class SuitFitAssessment:
+    public: PublicFitState = PublicFitState.FIT_UNKNOWN
+    private: PrivateFitState = PrivateFitState.NOT_YET_KNOWN
+    partner_length: SuitLengthRange = SuitLengthRange()
+
+
+def _default_suit_fit_states() -> dict[Denomination, SuitFitAssessment]:
+    return {suit: SuitFitAssessment() for suit in _SUIT_ORDER}
+
+
 @dataclass(frozen=True)
 class DecisionContext:
     hand: HandProfile
@@ -34,12 +69,14 @@ class DecisionContext:
     dealer: Seat
     vulnerability: Vulnerability
     simulation_evaluator: Callable[[Sequence[Call]], Call] | None = None
-    game_force: bool = False
-    known_fits: frozenset[Denomination] = frozenset()
+    auction_strength: AuctionStrength = (
+        AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE
+    )
+    fit_states: Mapping[Denomination, SuitFitAssessment] = field(
+        default_factory=_default_suit_fit_states
+    )
     game_reached: bool = False
     invitation: bool = False
-    invitation_suit: Denomination | None = None
-    invitation_min_suit_length: int | None = None
 
 
 @dataclass(frozen=True)
@@ -63,10 +100,9 @@ class PublicAuctionSignal:
     call: Call | None
     call_above: Bid | None
     establishes_fit: Denomination | None
-    establishes_game_force: bool
+    rejects_fit: Denomination | None
+    sets_auction_strength: AuctionStrength | None
     establishes_invitation: bool
-    invitation_suit: Denomination | None
-    invitation_min_suit_length: int | None
 
 
 @dataclass(frozen=True)
@@ -95,7 +131,7 @@ class RuleCondition:
     nonjump_new_suit_overcall: bool = False
     suit_overcall_tiers: tuple[tuple[int, int, int], ...] = ()
     after_opening_calls: tuple[Call, ...] | None = None
-    game_force: bool | None = None
+    auction_strength: AuctionStrength | None = None
     invitation: bool | None = None
 
     def matches(self, context: DecisionContext) -> bool:
@@ -195,7 +231,10 @@ class RuleCondition:
         return True
 
     def matches_public_context(self, context: DecisionContext) -> bool:
-        if self.game_force is not None and context.game_force is not self.game_force:
+        if (
+            self.auction_strength is not None
+            and context.auction_strength is not self.auction_strength
+        ):
             return False
         if self.invitation is not None and context.invitation is not self.invitation:
             return False
@@ -958,9 +997,13 @@ def _parse_rule(
         raise ValueError(f"Module rule {index} id must be a non-empty string.")
     raw_condition = value["when"]
     condition = _parse_condition(raw_condition, index, strength_ranges)
-    if jump_to_game_in_gf and condition.game_force is not True:
+    if (
+        jump_to_game_in_gf
+        and condition.auction_strength is not AuctionStrength.GAME_FORCING
+    ):
         raise ValueError(
-            f"Module rule {index} jump_to_game_in_gf requires game_force = true."
+            f"Module rule {index} jump_to_game_in_gf requires "
+            "auction_strength = 'game_forcing'."
         )
     if respond_to_invitation and condition.invitation is not True:
         raise ValueError(
@@ -1030,10 +1073,10 @@ def _parse_public_signals(value: object) -> tuple[PublicAuctionSignal, ...]:
         "call",
         "call_above",
         "establishes_fit",
+        "rejects_fit",
+        "sets_auction_strength",
         "establishes_game_force",
         "establishes_invitation",
-        "invitation_suit",
-        "invitation_min_suit_length",
     }
     for index, signal in enumerate(value):
         if not isinstance(signal, dict):
@@ -1078,56 +1121,61 @@ def _parse_public_signals(value: object) -> tuple[PublicAuctionSignal, ...]:
                     f"Public signal {index} establishes_fit must name a suit."
                 )
             establishes_fit = _parse_suit(raw_fit, index)
+        rejects_fit: Denomination | None = None
+        if "rejects_fit" in signal:
+            raw_rejected_fit = signal["rejects_fit"]
+            if not isinstance(raw_rejected_fit, str):
+                raise ValueError(
+                    f"Public signal {index} rejects_fit must name a suit."
+                )
+            rejects_fit = _parse_suit(raw_rejected_fit, index)
+        if establishes_fit is not None and rejects_fit is not None:
+            raise ValueError(
+                f"Public signal {index} cannot establish and reject the same fit."
+            )
+        sets_auction_strength = (
+            _parse_auction_strength(
+                signal["sets_auction_strength"],
+                f"Public signal {index}",
+            )
+            if "sets_auction_strength" in signal
+            else None
+        )
         establishes_game_force = signal.get("establishes_game_force", False)
         if not isinstance(establishes_game_force, bool):
             raise ValueError(
                 f"Public signal {index} establishes_game_force must be a boolean."
             )
+        if establishes_game_force:
+            if (
+                sets_auction_strength is not None
+                and sets_auction_strength is not AuctionStrength.GAME_FORCING
+            ):
+                raise ValueError(
+                    f"Public signal {index} sets conflicting auction strengths."
+                )
+            sets_auction_strength = AuctionStrength.GAME_FORCING
         establishes_invitation = signal.get("establishes_invitation", False)
         if not isinstance(establishes_invitation, bool):
             raise ValueError(
                 f"Public signal {index} establishes_invitation must be a boolean."
             )
-        invitation_suit: Denomination | None = None
-        if "invitation_suit" in signal:
-            raw_invitation_suit = signal["invitation_suit"]
-            if not isinstance(raw_invitation_suit, str):
-                raise ValueError(
-                    f"Public signal {index} invitation_suit must name a suit."
-                )
-            invitation_suit = _parse_suit(raw_invitation_suit, index)
-        invitation_min_suit_length = signal.get("invitation_min_suit_length")
-        if invitation_min_suit_length is not None and (
-            not isinstance(invitation_min_suit_length, int)
-            or isinstance(invitation_min_suit_length, bool)
-            or not 1 <= invitation_min_suit_length <= 13
-        ):
-            raise ValueError(
-                f"Public signal {index} invitation_min_suit_length must be "
-                "an integer from 1 to 13."
-            )
-        if (invitation_suit is None) != (invitation_min_suit_length is None):
-            raise ValueError(
-                f"Public signal {index} must define invitation_suit and "
-                "invitation_min_suit_length together."
-            )
-        if not establishes_invitation and invitation_suit is not None:
-            raise ValueError(
-                f"Public signal {index} invitation suit requires "
-                "establishes_invitation = true."
-            )
         if (
             establishes_fit is None
-            and not establishes_game_force
+            and rejects_fit is None
+            and sets_auction_strength is None
             and not establishes_invitation
         ):
             raise ValueError(
-                f"Public signal {index} must establish a fit, game force, "
+                f"Public signal {index} must update a fit, auction strength, "
                 "or invitation."
             )
-        if establishes_fit is not None and call_above is not None:
+        if (
+            (establishes_fit is not None or rejects_fit is not None)
+            and call_above is not None
+        ):
             raise ValueError(
-                f"Public signal {index} cannot establish a fit using call_above."
+                f"Public signal {index} cannot update a fit using call_above."
             )
         signals.append(
             PublicAuctionSignal(
@@ -1135,10 +1183,9 @@ def _parse_public_signals(value: object) -> tuple[PublicAuctionSignal, ...]:
                 call,
                 call_above,
                 establishes_fit,
-                establishes_game_force,
+                rejects_fit,
+                sets_auction_strength,
                 establishes_invitation,
-                invitation_suit,
-                invitation_min_suit_length,
             )
         )
     return tuple(signals)
@@ -1174,6 +1221,7 @@ def _parse_condition(
         "nonjump_new_suit_overcall",
         "suit_overcall_tiers",
         "after_opening_calls",
+        "auction_strength",
         "game_force",
         "invitation",
     }
@@ -1288,9 +1336,27 @@ def _parse_condition(
                 f"Module rule {index} after_opening_calls must be an array."
             )
         after_opening_calls = tuple(_parse_call(call) for call in raw_calls)
-    game_force = value.get("game_force")
-    if game_force is not None and not isinstance(game_force, bool):
-        raise ValueError(f"Module rule {index} game_force must be a boolean.")
+    if "auction_strength" in value and "game_force" in value:
+        raise ValueError(
+            f"Module rule {index} must not combine auction_strength and game_force."
+        )
+    auction_strength = (
+        _parse_auction_strength(
+            value["auction_strength"],
+            f"Module rule {index}",
+        )
+        if "auction_strength" in value
+        else None
+    )
+    if "game_force" in value:
+        game_force = value["game_force"]
+        if not isinstance(game_force, bool):
+            raise ValueError(f"Module rule {index} game_force must be a boolean.")
+        auction_strength = (
+            AuctionStrength.GAME_FORCING
+            if game_force
+            else AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE
+        )
     invitation = value.get("invitation")
     if invitation is not None and not isinstance(invitation, bool):
         raise ValueError(f"Module rule {index} invitation must be a boolean.")
@@ -1355,10 +1421,25 @@ def _parse_condition(
         nonjump_new_suit_overcall=nonjump_new_suit_overcall,
         suit_overcall_tiers=suit_overcall_tiers,
         after_opening_calls=after_opening_calls,
-        game_force=game_force,
+        auction_strength=auction_strength,
         invitation=invitation,
         **suit_length_values,
     )
+
+
+def _parse_auction_strength(value: object, source: str) -> AuctionStrength:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{source} auction strength must be one of "
+            f"{', '.join(strength.value for strength in AuctionStrength)}."
+        )
+    try:
+        return AuctionStrength(value)
+    except ValueError as error:
+        raise ValueError(
+            f"{source} auction strength must be one of "
+            f"{', '.join(strength.value for strength in AuctionStrength)}."
+        ) from error
 
 
 def _parse_integer_condition(
@@ -1658,6 +1739,200 @@ def _context_with_public_signals(
     context: DecisionContext,
     modules: Sequence[BiddingModule],
 ) -> DecisionContext:
+    strengths = {
+        0: AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE,
+        1: AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE,
+    }
+    current_partnership = _partnership_key(context.seat)
+    if (
+        context.auction_strength
+        is not AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE
+    ):
+        strengths[current_partnership] = context.auction_strength
+    advertised_lengths = {
+        seat: {suit: SuitLengthRange() for suit in _SUIT_ORDER}
+        for seat in Seat
+    }
+    public_fit_updates: dict[int, dict[Denomination, PublicFitState]] = {
+        0: {},
+        1: {},
+    }
+    for suit, assessment in context.fit_states.items():
+        if assessment.public is not PublicFitState.FIT_UNKNOWN:
+            public_fit_updates[current_partnership][suit] = assessment.public
+        partner = context.seat.next.next
+        if assessment.partner_length != SuitLengthRange():
+            advertised_lengths[partner][suit] = assessment.partner_length
+
+    fit_transfer_indices: set[int] = set()
+    invitation_signal: tuple[int, Seat] | None = None
+
+    for index, entry in enumerate(context.auction):
+        auction_prefix = context.auction[:index]
+        before_call = _context_for_auction_prefix(
+            context,
+            auction_prefix,
+            entry.seat,
+            strengths,
+            advertised_lengths,
+            public_fit_updates,
+            fit_transfer_indices,
+            invitation_signal,
+        )
+        if isinstance(entry.call, Bid):
+            inferred_ranges = _infer_public_suit_lengths(
+                before_call,
+                modules,
+                entry.call,
+            )
+            for suit, inferred_range in inferred_ranges.items():
+                current_range = advertised_lengths[entry.seat][suit]
+                minimum = max(current_range.minimum, inferred_range.minimum)
+                maximum = min(current_range.maximum, inferred_range.maximum)
+                if minimum > maximum:
+                    raise RuntimeError(
+                        f"Auction call {entry.call!s} contradicts the "
+                        f"advertised {suit.value} length for {entry.seat.name}."
+                    )
+                advertised_lengths[entry.seat][suit] = SuitLengthRange(
+                    minimum,
+                    maximum,
+                )
+
+        for module in modules:
+            if (
+                not module.public_signals
+                or not _matches_module_opening(before_call, module)
+            ):
+                continue
+            for signal in module.public_signals:
+                if not _public_signal_matches(
+                    before_call,
+                    entry.call,
+                    signal,
+                ):
+                    continue
+                partnership = _partnership_key(entry.seat)
+                if signal.establishes_fit is not None:
+                    public_fit_updates[partnership][signal.establishes_fit] = (
+                        PublicFitState.FIT_ESTABLISHED
+                    )
+                    if (
+                        isinstance(entry.call, Bid)
+                        and entry.call.denomination is not signal.establishes_fit
+                    ):
+                        fit_transfer_indices.add(index)
+                if signal.rejects_fit is not None:
+                    public_fit_updates[partnership][signal.rejects_fit] = (
+                        PublicFitState.FIT_REJECTED
+                    )
+                if signal.sets_auction_strength is not None:
+                    strengths[partnership] = signal.sets_auction_strength
+                if signal.establishes_invitation:
+                    invitation_signal = (index, entry.seat)
+
+    return _context_for_auction_prefix(
+        context,
+        context.auction,
+        context.seat,
+        strengths,
+        advertised_lengths,
+        public_fit_updates,
+        fit_transfer_indices,
+        invitation_signal,
+        preserve_explicit_game_reached=True,
+    )
+
+
+def _context_for_auction_prefix(
+    context: DecisionContext,
+    auction: tuple[AuctionEntry, ...],
+    seat: Seat,
+    strengths: Mapping[int, AuctionStrength],
+    advertised_lengths: Mapping[Seat, Mapping[Denomination, SuitLengthRange]],
+    public_fit_updates: Mapping[int, Mapping[Denomination, PublicFitState]],
+    fit_transfer_indices: set[int],
+    invitation_signal: tuple[int, Seat] | None,
+    *,
+    preserve_explicit_game_reached: bool = False,
+) -> DecisionContext:
+    partnership = _partnership_key(seat)
+    partner = seat.next.next
+    fit_states: dict[Denomination, SuitFitAssessment] = {}
+    for suit in _SUIT_ORDER:
+        own_range = advertised_lengths[seat][suit]
+        partner_range = advertised_lengths[partner][suit]
+        public_fit = public_fit_updates[partnership].get(
+            suit,
+            _derive_public_fit(own_range, partner_range),
+        )
+        own_length = context.hand.shape[_SUIT_ORDER.index(suit)]
+        if public_fit is PublicFitState.FIT_ESTABLISHED:
+            private_fit = PrivateFitState.FIT
+        elif public_fit is PublicFitState.FIT_REJECTED:
+            private_fit = PrivateFitState.NO_FIT
+        elif own_length + partner_range.minimum >= 8:
+            private_fit = PrivateFitState.FIT
+        elif own_length + partner_range.maximum < 8:
+            private_fit = PrivateFitState.NO_FIT
+        else:
+            private_fit = PrivateFitState.NOT_YET_KNOWN
+        fit_states[suit] = SuitFitAssessment(
+            public_fit,
+            private_fit,
+            partner_range,
+        )
+
+    invitation = False
+    if invitation_signal is not None:
+        signal_index, signal_seat = invitation_signal
+        following_entries = auction[signal_index + 1 :]
+        invitation = (
+            signal_seat is not seat
+            and _same_partnership(signal_seat, seat)
+            and bool(following_entries)
+            and all(
+                entry.call is PassCall.PASS
+                and not _same_partnership(entry.seat, signal_seat)
+                for entry in following_entries
+            )
+        )
+    game_reached = any(
+        index not in fit_transfer_indices
+        and isinstance(entry.call, Bid)
+        and _is_game_bid(entry.call)
+        and _same_partnership(entry.seat, seat)
+        for index, entry in enumerate(auction)
+    )
+    if preserve_explicit_game_reached:
+        game_reached = game_reached or context.game_reached
+    return replace(
+        context,
+        auction=auction,
+        seat=seat,
+        auction_strength=strengths[partnership],
+        fit_states=fit_states,
+        game_reached=game_reached,
+        invitation=invitation,
+    )
+
+
+def _derive_public_fit(
+    own_range: SuitLengthRange,
+    partner_range: SuitLengthRange,
+) -> PublicFitState:
+    if own_range.minimum + partner_range.minimum >= 8:
+        return PublicFitState.FIT_ESTABLISHED
+    if own_range.maximum + partner_range.maximum < 8:
+        return PublicFitState.FIT_REJECTED
+    return PublicFitState.FIT_UNKNOWN
+
+
+def _public_signal_matches(
+    context: DecisionContext,
+    observed_call: Call,
+    signal: PublicAuctionSignal,
+) -> bool:
     opening_index = next(
         (
             index
@@ -1667,89 +1942,165 @@ def _context_with_public_signals(
         None,
     )
     if opening_index is None:
-        return context
-
+        return False
     auction_after_opening = tuple(
         entry.call for entry in context.auction[opening_index + 1 :]
     )
-    game_force = context.game_force
-    known_fits = set(context.known_fits)
-    invitation = False
-    invitation_suit: Denomination | None = None
-    invitation_min_suit_length: int | None = None
-    fit_transfer_indices: set[int] = set()
+    if auction_after_opening != signal.after_opening_calls:
+        return False
+    if signal.call is not None and observed_call != signal.call:
+        return False
+    if signal.call_above is not None and (
+        not isinstance(observed_call, Bid)
+        or observed_call.order <= signal.call_above.order
+    ):
+        return False
+    return True
+
+
+def _infer_public_suit_lengths(
+    context: DecisionContext,
+    modules: Sequence[BiddingModule],
+    observed_call: Bid,
+) -> dict[Denomination, SuitLengthRange]:
+    alternatives: list[dict[Denomination, SuitLengthRange]] = []
     for module in modules:
-        if not module.public_signals or not _matches_module_opening(context, module):
+        if not _matches_module_opening(context, module):
             continue
-        for signal in module.public_signals:
-            signal_index = len(signal.after_opening_calls)
+        for rule in module.rules:
             if (
-                len(auction_after_opening) <= signal_index
-                or auction_after_opening[:signal_index] != signal.after_opening_calls
+                rule.jump_to_game_in_gf
+                or rule.respond_to_invitation
+                or observed_call not in rule.preferred_calls
+                or not rule.condition.matches_public_context(context)
             ):
                 continue
-            observed_call = auction_after_opening[signal_index]
-            if signal.call is not None and observed_call != signal.call:
-                continue
-            if signal.call_above is not None and (
-                not isinstance(observed_call, Bid)
-                or observed_call.order <= signal.call_above.order
-            ):
-                continue
-            if signal.establishes_fit is not None:
-                known_fits.add(signal.establishes_fit)
-                if (
-                    isinstance(observed_call, Bid)
-                    and observed_call.denomination is not signal.establishes_fit
-                ):
-                    fit_transfer_indices.add(opening_index + 1 + signal_index)
-            game_force = game_force or signal.establishes_game_force
-            if signal.establishes_invitation:
-                signal_entry = context.auction[opening_index + 1 + signal_index]
-                following_entries = context.auction[
-                    opening_index + 2 + signal_index :
-                ]
-                invitation = (
-                    signal_entry.seat is not context.seat
-                    and _same_partnership(signal_entry.seat, context.seat)
-                    and all(
-                        entry.call is PassCall.PASS
-                        and not _same_partnership(entry.seat, signal_entry.seat)
-                        for entry in following_entries
-                    )
-                )
-                if invitation:
-                    invitation_suit = signal.invitation_suit
-                    invitation_min_suit_length = (
-                        signal.invitation_min_suit_length
-                    )
-    game_reached = context.game_reached or any(
-        index not in fit_transfer_indices
-        and isinstance(entry.call, Bid)
-        and _is_game_bid(entry.call)
-        and _same_partnership(entry.seat, context.seat)
-        for index, entry in enumerate(context.auction)
-    )
-    return replace(
-        context,
-        game_force=game_force,
-        known_fits=frozenset(known_fits),
-        game_reached=game_reached,
-        invitation=invitation,
-        invitation_suit=invitation_suit,
-        invitation_min_suit_length=invitation_min_suit_length,
-    )
+            ranges = _rule_suit_length_ranges(rule.condition, observed_call)
+            if ranges is not None:
+                alternatives.append(ranges)
+    if not alternatives:
+        return {}
+    return {
+        suit: SuitLengthRange(
+            min(option[suit].minimum for option in alternatives),
+            max(option[suit].maximum for option in alternatives),
+        )
+        for suit in _SUIT_ORDER
+    }
+
+
+def _rule_suit_length_ranges(
+    condition: RuleCondition,
+    observed_call: Bid,
+) -> dict[Denomination, SuitLengthRange] | None:
+    bounds = {suit: [0, 13] for suit in _SUIT_ORDER}
+
+    def constrain(
+        suit: Denomination,
+        minimum: int | None = None,
+        maximum: int | None = None,
+    ) -> None:
+        current = bounds[suit]
+        if minimum is not None:
+            current[0] = max(current[0], minimum)
+        if maximum is not None:
+            current[1] = min(current[1], maximum)
+
+    for suit, minimum, maximum in condition.suit_lengths:
+        constrain(suit, minimum, maximum)
+    if condition.suit is not None:
+        constrain(
+            condition.suit,
+            condition.min_suit_length,
+            condition.max_suit_length,
+        )
+        if condition.longest_qualifying_suit_min_length is not None:
+            constrain(
+                condition.suit,
+                minimum=condition.longest_qualifying_suit_min_length,
+            )
+        if condition.max_outside_major_length is not None:
+            for suit in (Denomination.SPADES, Denomination.HEARTS):
+                if suit is not condition.suit:
+                    constrain(suit, maximum=condition.max_outside_major_length)
+    if isinstance(observed_call, Bid):
+        opening_minimum = dict(condition.suit_opening_min_lengths).get(
+            observed_call.denomination
+        )
+        if opening_minimum is not None:
+            constrain(observed_call.denomination, minimum=opening_minimum)
+        overcall_minimums = [
+            minimum_length
+            for level, _, minimum_length in condition.suit_overcall_tiers
+            if level == observed_call.level
+        ]
+        if overcall_minimums:
+            constrain(
+                observed_call.denomination,
+                minimum=min(overcall_minimums),
+            )
+        if (
+            condition.suit is observed_call.denomination
+            and condition.has_stopper is False
+        ):
+            constrain(observed_call.denomination, maximum=4)
+
+    if any(minimum > maximum for minimum, maximum in bounds.values()):
+        return None
+
+    if condition.shapes is not None:
+        possible_shapes = {
+            suit_lengths
+            for shape in condition.shapes
+            for suit_lengths in permutations(shape)
+            if all(
+                bounds[suit][0] <= length <= bounds[suit][1]
+                for suit, length in zip(_SUIT_ORDER, suit_lengths, strict=True)
+            )
+        }
+        if not possible_shapes:
+            return None
+        return {
+            suit: SuitLengthRange(
+                min(shape[index] for shape in possible_shapes),
+                max(shape[index] for shape in possible_shapes),
+            )
+            for index, suit in enumerate(_SUIT_ORDER)
+        }
+
+    while True:
+        previous = tuple((minimum, maximum) for minimum, maximum in bounds.values())
+        for suit in _SUIT_ORDER:
+            other_suits = [other for other in _SUIT_ORDER if other is not suit]
+            minimum = max(
+                bounds[suit][0],
+                13 - sum(bounds[other][1] for other in other_suits),
+            )
+            maximum = min(
+                bounds[suit][1],
+                13 - sum(bounds[other][0] for other in other_suits),
+            )
+            bounds[suit] = [minimum, maximum]
+        if (
+            any(minimum > maximum for minimum, maximum in bounds.values())
+            or sum(minimum for minimum, _ in bounds.values()) > 13
+            or sum(maximum for _, maximum in bounds.values()) < 13
+        ):
+            return None
+        current = tuple((minimum, maximum) for minimum, maximum in bounds.values())
+        if current == previous:
+            break
+    return {
+        suit: SuitLengthRange(*bounds[suit])
+        for suit in _SUIT_ORDER
+    }
+
+
+def _partnership_key(seat: Seat) -> int:
+    return int(seat in (Seat.EAST, Seat.WEST))
 
 
 def _invitation_response_calls(context: DecisionContext) -> tuple[Call, ...]:
-    known_fits = set(context.known_fits)
-    if context.invitation_suit is not None:
-        if context.invitation_min_suit_length is None:
-            raise RuntimeError("An invitation suit requires a shown minimum length.")
-        suit_length = context.hand.shape[_SUIT_ORDER.index(context.invitation_suit)]
-        if suit_length + context.invitation_min_suit_length >= 8:
-            known_fits.add(context.invitation_suit)
-
     major_games = {
         Denomination.HEARTS: Bid(4, Denomination.HEARTS),
         Denomination.SPADES: Bid(4, Denomination.SPADES),
@@ -1761,7 +2112,7 @@ def _invitation_response_calls(context: DecisionContext) -> tuple[Call, ...]:
     major_fits = [
         major_games[suit]
         for suit in (Denomination.HEARTS, Denomination.SPADES)
-        if suit in known_fits
+        if context.fit_states[suit].private is PrivateFitState.FIT
     ]
     if major_fits:
         candidates = [PassCall.PASS, *major_fits]
@@ -1769,7 +2120,7 @@ def _invitation_response_calls(context: DecisionContext) -> tuple[Call, ...]:
         minor_fits = [
             minor_games[suit]
             for suit in (Denomination.CLUBS, Denomination.DIAMONDS)
-            if suit in known_fits
+            if context.fit_states[suit].private is PrivateFitState.FIT
         ]
         candidates = [
             PassCall.PASS,
@@ -1796,11 +2147,16 @@ def _jump_to_game_in_gf(context: DecisionContext) -> Call | None:
         Denomination.CLUBS: Bid(5, Denomination.CLUBS),
         Denomination.DIAMONDS: Bid(5, Denomination.DIAMONDS),
     }
-    if context.known_fits:
+    private_fits = {
+        suit
+        for suit, assessment in context.fit_states.items()
+        if assessment.private is PrivateFitState.FIT
+    }
+    if private_fits:
         candidates = sorted(
             (
                 game_calls_by_suit[suit]
-                for suit in context.known_fits
+                for suit in private_fits
                 if suit in game_calls_by_suit
             ),
             key=lambda call: call.order,

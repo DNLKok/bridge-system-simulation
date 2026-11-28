@@ -10,4 +10,4 @@ respond_to_invitation = true
 
 [rules.when]
 invitation = true
-game_force = false
+auction_strength = "game_might_still_be_possible"

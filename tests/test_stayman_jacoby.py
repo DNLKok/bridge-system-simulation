@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Callable, Sequence
@@ -17,9 +18,15 @@ from bridge_sim.model import (
 from bridge_sim.auction import run_auction
 from bridge_sim.model_assistant import CallRating
 from bridge_sim.systems import (
+    AuctionStrength,
     CompositeBiddingSystem,
     DecisionContext,
     ModuleDecision,
+    PrivateFitState,
+    PublicFitState,
+    SuitLengthRange,
+    _context_with_public_signals,
+    _derive_public_fit,
     load_module,
     load_system,
 )
@@ -308,6 +315,113 @@ class StaymanJacobyTests(unittest.TestCase):
                 )
                 self.assertEqual(decision, expected)
 
+    def test_auction_state_tracks_strength_and_public_private_fits(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        after_heart_transfer = _auction_context(
+            HandProfile(16, (4, 3, 3, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.DIAMONDS),
+                PassCall.PASS,
+            ),
+            Seat.NORTH,
+        )
+        state = _context_with_public_signals(after_heart_transfer, system.modules)
+        self.assertEqual(
+            state.auction_strength,
+            AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE,
+        )
+        self.assertEqual(
+            state.fit_states[Denomination.HEARTS].public,
+            PublicFitState.FIT_UNKNOWN,
+        )
+        self.assertEqual(
+            state.fit_states[Denomination.HEARTS].private,
+            PrivateFitState.FIT,
+        )
+        self.assertGreaterEqual(
+            state.fit_states[Denomination.HEARTS].partner_length.minimum,
+            5,
+        )
+
+        after_game_force_without_fit = _auction_context(
+            HandProfile(16, (4, 2, 4, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.DIAMONDS),
+                PassCall.PASS,
+                Bid(2, Denomination.HEARTS),
+                PassCall.PASS,
+                Bid(3, Denomination.NOTRUMP),
+                PassCall.PASS,
+            ),
+            Seat.NORTH,
+        )
+        state = _context_with_public_signals(
+            after_game_force_without_fit,
+            system.modules,
+        )
+        self.assertEqual(state.auction_strength, AuctionStrength.GAME_FORCING)
+        self.assertEqual(
+            state.fit_states[Denomination.HEARTS].public,
+            PublicFitState.FIT_UNKNOWN,
+        )
+        self.assertEqual(
+            state.fit_states[Denomination.HEARTS].private,
+            PrivateFitState.NO_FIT,
+        )
+        self.assertEqual(
+            _derive_public_fit(
+                SuitLengthRange(0, 2),
+                SuitLengthRange(0, 5),
+            ),
+            PublicFitState.FIT_REJECTED,
+        )
+
+    def test_auction_strength_can_be_set_to_game_no_longer_possible(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            module_path = Path(temporary_directory) / "game-no-longer-possible.toml"
+            module_path.write_text(
+                """\
+schema_version = 1
+kind = "module"
+id = "test-game-strength"
+version = "1.0.0"
+name = "Test game strength"
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "2NT"
+sets_auction_strength = "game_no_longer_possible"
+
+[[rules]]
+id = "placeholder"
+call = "PASS"
+
+[rules.when]
+passout_seat = true
+""",
+                encoding="utf-8",
+            )
+            module = load_module(module_path)
+            context = _auction_context(
+                HandProfile(16, (4, 3, 3, 3)),
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+            )
+            state = _context_with_public_signals(context, (module,))
+            self.assertEqual(
+                state.auction_strength,
+                AuctionStrength.GAME_NO_LONGER_POSSIBLE,
+            )
+
     def test_invitational_responses_simulate_only_known_game_options(self) -> None:
         system = load_system(SYSTEM_PATH)
         cases = (
@@ -481,7 +595,7 @@ class StaymanJacobyTests(unittest.TestCase):
                     PassCall.PASS,
                 ),
                 HandProfile(9, (2, 2, 4, 5)),
-                Bid(3, Denomination.NOTRUMP),
+                Bid(5, Denomination.CLUBS),
             ),
         )
         for auction, hand, expected in cases:
@@ -624,7 +738,7 @@ class StaymanJacobyTests(unittest.TestCase):
             seat=Seat.NORTH,
             dealer=Seat.NORTH,
             vulnerability=Vulnerability.NONE,
-            game_force=True,
+            auction_strength=AuctionStrength.GAME_FORCING,
         )
         self.assertEqual(system.choose_call(gf_context), Bid(4, Denomination.HEARTS))
 
@@ -682,7 +796,7 @@ class StaymanJacobyTests(unittest.TestCase):
             dealer=Seat.NORTH,
             vulnerability=Vulnerability.NONE,
         )
-        self.assertEqual(system.choose_call(slam_interest), Bid(4, Denomination.HEARTS))
+        self.assertEqual(system.choose_call(slam_interest), Bid(4, Denomination.SPADES))
 
     def test_opener_continuations_over_two_notrump(self) -> None:
         auction = (

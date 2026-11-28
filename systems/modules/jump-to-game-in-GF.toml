@@ -9,4 +9,4 @@ id = "bid-game-after-public-game-force"
 jump_to_game_in_gf = true
 
 [rules.when]
-game_force = true
+auction_strength = "game_forcing"
