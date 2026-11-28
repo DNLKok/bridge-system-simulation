@@ -1265,6 +1265,39 @@ passout_seat = true
                 )
                 self.assertEqual(decision, Bid(3, Denomination.NOTRUMP))
 
+    def test_weak_short_club_stayman_hand_passes_any_opener_reply(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        hands = (
+            HandProfile(7, (4, 4, 5, 0)),
+            HandProfile(7, (4, 4, 4, 1)),
+        )
+        opener_replies = (
+            Bid(2, Denomination.DIAMONDS),
+            Bid(2, Denomination.HEARTS),
+            Bid(2, Denomination.SPADES),
+        )
+        for hand in hands:
+            with self.subTest(hand=hand):
+                initial = _context(hand)
+                self.assertEqual(
+                    system.choose_call(initial),
+                    Bid(2, Denomination.CLUBS),
+                )
+                for opener_reply in opener_replies:
+                    auction = (
+                        Bid(1, Denomination.NOTRUMP),
+                        PassCall.PASS,
+                        Bid(2, Denomination.CLUBS),
+                        PassCall.PASS,
+                        opener_reply,
+                        PassCall.PASS,
+                    )
+                    with self.subTest(opener_reply=opener_reply):
+                        decision = system.choose_call(
+                            _auction_context(hand, auction, Seat.SOUTH)
+                        )
+                        self.assertEqual(decision, PassCall.PASS)
+
     def test_game_force_persists_and_private_strength_is_not_a_signal(self) -> None:
         system = load_system(SYSTEM_PATH)
         already_at_game = _context(

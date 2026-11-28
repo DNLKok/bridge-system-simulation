@@ -460,6 +460,15 @@ min_suit_length = 6
 max_outside_major_length = 3
 
 [[rules]]
+id = "2c-weak-with-four-card-majors-and-diamond-short-clubs"
+call = "2C"
+
+[rules.when]
+after_opening_calls = ["PASS"]
+strengths = ["Weak"]
+suit_lengths = { spades = { max = 4 }, hearts = { max = 4 }, diamonds = { max = 5 }, clubs = { max = 1 } }
+
+[[rules]]
 id = "2c-invitational-gf-or-slam-interest-with-four-spades"
 call = "2C"
 
@@ -1255,6 +1264,15 @@ call = "4H"
 after_opening_calls = ["PASS", "2C", "PASS", "2H", "PASS"]
 strengths = ["GF"]
 suit_lengths = { hearts = { min = 4 } }
+
+[[rules]]
+id = "weak-diamond-response-stayman-hand-passes-over-two-diamonds"
+call = "PASS"
+
+[rules.when]
+after_opening_calls = ["PASS", "2C", "PASS", "2D", "PASS"]
+strengths = ["Weak"]
+suit_lengths = { spades = { max = 4 }, hearts = { max = 4 }, diamonds = { max = 5 }, clubs = { max = 1 } }
 
 [[rules]]
 id = "weak-responder-shows-hearts-over-stayman-two-diamonds"
