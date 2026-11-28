@@ -191,7 +191,7 @@ class StandardTestReportTests(unittest.TestCase):
         north_south = load_system(settings.north_south_system)
         self.assertEqual(
             tuple(module.module_id for module in north_south.modules),
-            ("standard-openings", "stayman-jacoby"),
+            ("standard-openings", "jump-to-game-in-GF", "stayman-jacoby"),
         )
         self.assertEqual(load_system(settings.east_west_system).modules, ())
         timestamp = datetime(2026, 11, 28, 10, 12, 42, tzinfo=timezone.utc)

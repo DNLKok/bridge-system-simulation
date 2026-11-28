@@ -21,11 +21,13 @@ from bridge_sim.systems import (
     DecisionContext,
     ModuleDecision,
     load_module,
+    load_system,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "systems" / "modules" / "stayman-jacoby.toml"
+SYSTEM_PATH = ROOT / "systems" / "standard-stayman-jacoby.toml"
 LEGAL_CALLS = frozenset(
     {
         PassCall.PASS,
@@ -216,6 +218,113 @@ class StaymanJacobyTests(unittest.TestCase):
             )
         )
         self.assertEqual(_selected_call(responder), PassCall.PASS)
+
+    def test_public_game_force_and_fit_annotations_drive_game_bids(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        cases = (
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(3, Denomination.HEARTS),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+                Bid(3, Denomination.NOTRUMP),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(4, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+                Bid(4, Denomination.HEARTS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(4, Denomination.HEARTS),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+                Bid(4, Denomination.SPADES),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                    Bid(3, Denomination.CLUBS),
+                    PassCall.PASS,
+                    Bid(4, Denomination.CLUBS),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+                Bid(5, Denomination.CLUBS),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(3, Denomination.CLUBS),
+                    PassCall.PASS,
+                    Bid(3, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(3, Denomination.HEARTS),
+                    PassCall.PASS,
+                ),
+                Seat.NORTH,
+                Bid(5, Denomination.DIAMONDS),
+            ),
+        )
+        for calls, seat, expected in cases:
+            with self.subTest(calls=calls):
+                auction = tuple(
+                    AuctionEntry(Seat.NORTH, call)
+                    if index % 4 == 0
+                    else AuctionEntry(Seat.EAST, call)
+                    if index % 4 == 1
+                    else AuctionEntry(Seat.SOUTH, call)
+                    if index % 4 == 2
+                    else AuctionEntry(Seat.WEST, call)
+                    for index, call in enumerate(calls)
+                )
+                decision = system.choose_call(
+                    _context(HandProfile(9, (4, 3, 3, 3)), auction, seat=seat)
+                )
+                self.assertEqual(decision, expected)
+
+    def test_game_force_persists_and_private_strength_is_not_a_signal(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        already_at_game = _context(
+            HandProfile(9, (4, 3, 3, 3)),
+            (
+                AuctionEntry(Seat.NORTH, Bid(1, Denomination.NOTRUMP)),
+                AuctionEntry(Seat.EAST, PassCall.PASS),
+                AuctionEntry(Seat.SOUTH, Bid(3, Denomination.HEARTS)),
+                AuctionEntry(Seat.WEST, PassCall.PASS),
+                AuctionEntry(Seat.NORTH, Bid(3, Denomination.NOTRUMP)),
+                AuctionEntry(Seat.EAST, PassCall.PASS),
+            ),
+            seat=Seat.SOUTH,
+        )
+        self.assertEqual(system.choose_call(already_at_game), PassCall.PASS)
+
+        no_public_force = _context(
+            HandProfile(14, (4, 3, 3, 3)),
+            (
+                AuctionEntry(Seat.NORTH, Bid(1, Denomination.NOTRUMP)),
+                AuctionEntry(Seat.EAST, PassCall.PASS),
+                AuctionEntry(Seat.SOUTH, Bid(2, Denomination.CLUBS)),
+                AuctionEntry(Seat.WEST, PassCall.PASS),
+            ),
+            seat=Seat.NORTH,
+        )
+        self.assertEqual(system.choose_call(no_public_force), PassCall.PASS)
 
     def test_opener_continuations_over_two_notrump(self) -> None:
         auction = (

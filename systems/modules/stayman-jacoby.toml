@@ -7,6 +7,63 @@ name = "Stayman-Jacoby"
 partner_opening_calls = ["1NT"]
 uncontested_partner_opening = true
 
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "2S"
+establishes_fit = "clubs"
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "3C"
+establishes_fit = "diamonds"
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "3D"
+establishes_fit = "diamonds"
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "4D"
+establishes_fit = "hearts"
+establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "4H"
+establishes_fit = "spades"
+establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "3H"
+establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "3S"
+establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS"]
+call = "3NT"
+establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2S", "PASS", "2NT", "PASS"]
+call_above = "3C"
+establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS", "2S", "PASS", "3C", "PASS"]
+call_above = "3C"
+establishes_game_force = true
+
+[[public_signals]]
+after_opening_calls = ["PASS", "3C", "PASS", "3D", "PASS"]
+call_above = "3D"
+establishes_game_force = true
+
 [strength_ranges]
 "Slam interest" = { min_hcp = 15 }
 GF = { min_hcp = 9, max_hcp = 14 }

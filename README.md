@@ -74,6 +74,17 @@ with slam interest when without shortage. The opener's choices after 3♦, 3♥,
 and 3♠ are evaluated with sampled deals and double-dummy scores against par.
 Continuations after 2♣, 2♦, and 2♥ remain to be specified.
 
+Modules can also declare public auction signals with `public_signals`. These
+signals attach a confirmed fit or game force to an auction pattern, independent
+of either hand's private HCP range, and remain in effect for the rest of the
+auction. The Stayman-Jacoby module marks its specified responder bids and
+continuations this way. The reusable
+[jump-to-game-in-GF module](systems/modules/jump-to-game-in-GF.toml), included
+in the [Stayman-Jacoby system](systems/standard-stayman-jacoby.toml), responds
+to a public game force by bidding the cheapest game in a confirmed suit fit;
+without a confirmed suit fit it bids 3NT. If that game has already been bid by
+the partnership, it passes.
+
 ## Standard bidding-system test
 
 [systems/standard-test.toml](systems/standard-test.toml) composes standard

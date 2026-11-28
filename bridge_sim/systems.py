@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import combinations
 from pathlib import Path
@@ -34,6 +34,9 @@ class DecisionContext:
     dealer: Seat
     vulnerability: Vulnerability
     simulation_evaluator: Callable[[Sequence[Call]], Call] | None = None
+    game_force: bool = False
+    known_fits: frozenset[Denomination] = frozenset()
+    game_reached: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,15 @@ class DealerCallCondition:
     expressions: tuple[str, ...] = ()
     selects_call: bool = False
     impossible: bool = False
+
+
+@dataclass(frozen=True)
+class PublicAuctionSignal:
+    after_opening_calls: tuple[Call, ...]
+    call: Call | None
+    call_above: Bid | None
+    establishes_fit: Denomination | None
+    establishes_game_force: bool
 
 
 @dataclass(frozen=True)
@@ -77,6 +89,7 @@ class RuleCondition:
     nonjump_new_suit_overcall: bool = False
     suit_overcall_tiers: tuple[tuple[int, int, int], ...] = ()
     after_opening_calls: tuple[Call, ...] | None = None
+    game_force: bool | None = None
 
     def matches(self, context: DecisionContext) -> bool:
         if not self.matches_public_context(context):
@@ -175,6 +188,8 @@ class RuleCondition:
         return True
 
     def matches_public_context(self, context: DecisionContext) -> bool:
+        if self.game_force is not None and context.game_force is not self.game_force:
+            return False
         if self.after_opening_calls is not None:
             opening_index = next(
                 (
@@ -321,6 +336,7 @@ class BiddingRule:
     preferred_calls: tuple[Call, ...]
     explanation: str | None = None
     evaluate_calls: bool = False
+    jump_to_game_in_gf: bool = False
 
     def decide(self, context: DecisionContext, module_id: str) -> ModuleDecision | None:
         if not self.condition.matches(context):
@@ -373,6 +389,8 @@ class BiddingRule:
         return DealerCallCondition((f"!({expression})",))
 
     def _selected_call(self, context: DecisionContext) -> Call | None:
+        if self.jump_to_game_in_gf:
+            return _jump_to_game_in_gf(context)
         if self.condition.suit_opening_min_lengths:
             tie_order = self.condition.suit_tie_order
             if tie_order is None:
@@ -560,6 +578,7 @@ class BiddingModule:
     opponent_opening_calls: frozenset[Bid] | None = None
     partner_opening_calls: frozenset[Bid] | None = None
     uncontested_partner_opening: bool = False
+    public_signals: tuple[PublicAuctionSignal, ...] = ()
 
     def choose(self, context: DecisionContext) -> ModuleDecision | None:
         if not _matches_module_opening(context, self):
@@ -614,6 +633,7 @@ class CompositeBiddingSystem:
         self,
         context: DecisionContext,
     ) -> Call | OutOfBookDecision:
+        context = _context_with_public_signals(context, self.modules)
         for module in self.modules:
             decision = module.choose(context)
             if decision is None:
@@ -637,6 +657,7 @@ class CompositeBiddingSystem:
         context: DecisionContext,
         observed_call: Call,
     ) -> DealerCallCondition:
+        context = _context_with_public_signals(context, self.modules)
         return _dealer_call_condition(
             self.modules,
             self.fallback,
@@ -674,6 +695,7 @@ def load_module(path: str | Path) -> BiddingModule:
         "partner_opening_calls",
         "uncontested_partner_opening",
         "strength_ranges",
+        "public_signals",
     }
     expected_keys = module_keys | (optional_keys & set(config))
     _require_keys(config, expected_keys, f"module file {module_path}")
@@ -706,6 +728,7 @@ def load_module(path: str | Path) -> BiddingModule:
     rule_ids = [rule.rule_id for rule in rules]
     if len(set(rule_ids)) != len(rule_ids):
         raise ValueError(f"Module {module_id!r} defines duplicate rule IDs.")
+    public_signals = _parse_public_signals(config.get("public_signals"))
     return BiddingModule(
         module_id,
         version,
@@ -714,6 +737,7 @@ def load_module(path: str | Path) -> BiddingModule:
         opening_calls,
         partner_opening_calls,
         uncontested_partner_opening,
+        public_signals,
     )
 
 
@@ -881,6 +905,7 @@ def _parse_rule(
         "call",
         "try_calls",
         "evaluate_calls",
+        "jump_to_game_in_gf",
         "explanation",
     }
     missing = required - set(value)
@@ -892,13 +917,18 @@ def _parse_rule(
         if unknown:
             details.append(f"unknown keys: {', '.join(sorted(unknown))}")
         raise ValueError(f"Invalid module rule {index} ({'; '.join(details)}).")
+    jump_to_game_in_gf = value.get("jump_to_game_in_gf", False)
+    if not isinstance(jump_to_game_in_gf, bool):
+        raise ValueError(
+            f"Module rule {index} jump_to_game_in_gf must be a boolean."
+        )
     call_modes = sum(
         key in value for key in ("call", "try_calls", "evaluate_calls")
-    )
+    ) + int(jump_to_game_in_gf)
     if call_modes != 1:
         raise ValueError(
             f"Module rule {index} must define exactly one of call, try_calls, "
-            "or evaluate_calls."
+            "evaluate_calls, or jump_to_game_in_gf."
         )
 
     rule_id = value["id"]
@@ -906,8 +936,14 @@ def _parse_rule(
         raise ValueError(f"Module rule {index} id must be a non-empty string.")
     raw_condition = value["when"]
     condition = _parse_condition(raw_condition, index, strength_ranges)
+    if jump_to_game_in_gf and condition.game_force is not True:
+        raise ValueError(
+            f"Module rule {index} jump_to_game_in_gf requires game_force = true."
+        )
     evaluate_calls = "evaluate_calls" in value
-    if "call" in value:
+    if jump_to_game_in_gf:
+        preferred_calls = ()
+    elif "call" in value:
         preferred_calls = (_parse_call(value["call"]),)
     elif evaluate_calls:
         raw_calls = value["evaluate_calls"]
@@ -951,7 +987,90 @@ def _parse_rule(
         preferred_calls,
         explanation,
         evaluate_calls,
+        jump_to_game_in_gf,
     )
+
+
+def _parse_public_signals(value: object) -> tuple[PublicAuctionSignal, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ValueError("public_signals must be a non-empty array of tables.")
+
+    signals: list[PublicAuctionSignal] = []
+    allowed = {
+        "after_opening_calls",
+        "call",
+        "call_above",
+        "establishes_fit",
+        "establishes_game_force",
+    }
+    for index, signal in enumerate(value):
+        if not isinstance(signal, dict):
+            raise ValueError(f"Public signal {index} must be a TOML table.")
+        unknown = set(signal) - allowed
+        if unknown:
+            raise ValueError(
+                f"Unknown fields in public signal {index}: "
+                f"{', '.join(sorted(unknown))}."
+            )
+        if "after_opening_calls" not in signal:
+            raise ValueError(
+                f"Public signal {index} must define after_opening_calls."
+            )
+        raw_calls = signal["after_opening_calls"]
+        if not isinstance(raw_calls, list):
+            raise ValueError(
+                f"Public signal {index} after_opening_calls must be an array."
+            )
+        after_opening_calls = tuple(_parse_call(call) for call in raw_calls)
+        if ("call" in signal) == ("call_above" in signal):
+            raise ValueError(
+                f"Public signal {index} must define exactly one of call "
+                "or call_above."
+            )
+        call: Call | None = None
+        call_above: Bid | None = None
+        if "call" in signal:
+            call = _parse_call(signal["call"])
+        else:
+            parsed_call = _parse_call(signal["call_above"])
+            if not isinstance(parsed_call, Bid):
+                raise ValueError(
+                    f"Public signal {index} call_above must be a contract bid."
+                )
+            call_above = parsed_call
+        establishes_fit: Denomination | None = None
+        if "establishes_fit" in signal:
+            raw_fit = signal["establishes_fit"]
+            if not isinstance(raw_fit, str):
+                raise ValueError(
+                    f"Public signal {index} establishes_fit must name a suit."
+                )
+            establishes_fit = _parse_suit(raw_fit, index)
+        establishes_game_force = signal.get("establishes_game_force", False)
+        if not isinstance(establishes_game_force, bool):
+            raise ValueError(
+                f"Public signal {index} establishes_game_force must be a boolean."
+            )
+        if establishes_fit is None and not establishes_game_force:
+            raise ValueError(
+                f"Public signal {index} must establish a fit or a game force."
+            )
+        if establishes_fit is not None and call_above is not None:
+            raise ValueError(
+                f"Public signal {index} cannot establish a fit using call_above."
+            )
+        signals.append(
+            PublicAuctionSignal(
+                after_opening_calls,
+                call,
+                call_above,
+                establishes_fit,
+                establishes_game_force,
+            )
+        )
+    return tuple(signals)
 
 
 def _parse_condition(
@@ -984,6 +1103,7 @@ def _parse_condition(
         "nonjump_new_suit_overcall",
         "suit_overcall_tiers",
         "after_opening_calls",
+        "game_force",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -1096,6 +1216,9 @@ def _parse_condition(
                 f"Module rule {index} after_opening_calls must be an array."
             )
         after_opening_calls = tuple(_parse_call(call) for call in raw_calls)
+    game_force = value.get("game_force")
+    if game_force is not None and not isinstance(game_force, bool):
+        raise ValueError(f"Module rule {index} game_force must be a boolean.")
     if suit_overcall_tiers and not nonjump_new_suit_overcall:
         raise ValueError(
             f"Module rule {index} suit_overcall_tiers require "
@@ -1157,6 +1280,7 @@ def _parse_condition(
         nonjump_new_suit_overcall=nonjump_new_suit_overcall,
         suit_overcall_tiers=suit_overcall_tiers,
         after_opening_calls=after_opening_calls,
+        game_force=game_force,
         **suit_length_values,
     )
 
@@ -1452,6 +1576,106 @@ def _matches_module_opening(
         module.partner_opening_calls,
         module.uncontested_partner_opening,
     )
+
+
+def _context_with_public_signals(
+    context: DecisionContext,
+    modules: Sequence[BiddingModule],
+) -> DecisionContext:
+    opening_index = next(
+        (
+            index
+            for index, entry in enumerate(context.auction)
+            if entry.call is not PassCall.PASS
+        ),
+        None,
+    )
+    if opening_index is None:
+        return context
+
+    auction_after_opening = tuple(
+        entry.call for entry in context.auction[opening_index + 1 :]
+    )
+    game_force = context.game_force
+    known_fits = set(context.known_fits)
+    fit_transfer_indices: set[int] = set()
+    for module in modules:
+        if not module.public_signals or not _matches_module_opening(context, module):
+            continue
+        for signal in module.public_signals:
+            signal_index = len(signal.after_opening_calls)
+            if (
+                len(auction_after_opening) <= signal_index
+                or auction_after_opening[:signal_index] != signal.after_opening_calls
+            ):
+                continue
+            observed_call = auction_after_opening[signal_index]
+            if signal.call is not None and observed_call != signal.call:
+                continue
+            if signal.call_above is not None and (
+                not isinstance(observed_call, Bid)
+                or observed_call.order <= signal.call_above.order
+            ):
+                continue
+            if signal.establishes_fit is not None:
+                known_fits.add(signal.establishes_fit)
+                if (
+                    isinstance(observed_call, Bid)
+                    and observed_call.denomination is not signal.establishes_fit
+                ):
+                    fit_transfer_indices.add(opening_index + 1 + signal_index)
+            game_force = game_force or signal.establishes_game_force
+    game_reached = context.game_reached or any(
+        index not in fit_transfer_indices
+        and isinstance(entry.call, Bid)
+        and _is_game_bid(entry.call)
+        and _same_partnership(entry.seat, context.seat)
+        for index, entry in enumerate(context.auction)
+    )
+    return replace(
+        context,
+        game_force=game_force,
+        known_fits=frozenset(known_fits),
+        game_reached=game_reached,
+    )
+
+
+def _jump_to_game_in_gf(context: DecisionContext) -> Call | None:
+    if context.game_reached:
+        return PassCall.PASS if PassCall.PASS in context.legal_calls else None
+
+    game_calls_by_suit = {
+        Denomination.HEARTS: Bid(4, Denomination.HEARTS),
+        Denomination.SPADES: Bid(4, Denomination.SPADES),
+        Denomination.CLUBS: Bid(5, Denomination.CLUBS),
+        Denomination.DIAMONDS: Bid(5, Denomination.DIAMONDS),
+    }
+    if context.known_fits:
+        candidates = sorted(
+            (
+                game_calls_by_suit[suit]
+                for suit in context.known_fits
+                if suit in game_calls_by_suit
+            ),
+            key=lambda call: call.order,
+        )
+    else:
+        candidates = [Bid(3, Denomination.NOTRUMP)]
+    return next(
+        (call for call in candidates if call in context.legal_calls),
+        PassCall.PASS if PassCall.PASS in context.legal_calls else None,
+    )
+
+
+def _is_game_bid(call: Bid) -> bool:
+    minimum_levels = {
+        Denomination.NOTRUMP: 3,
+        Denomination.HEARTS: 4,
+        Denomination.SPADES: 4,
+        Denomination.CLUBS: 5,
+        Denomination.DIAMONDS: 5,
+    }
+    return call.level >= minimum_levels[call.denomination]
 
 
 def _matches_partner_opening(
