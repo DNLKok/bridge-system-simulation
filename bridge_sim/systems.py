@@ -755,6 +755,25 @@ class CompositeBiddingSystem:
         context: DecisionContext,
     ) -> Call | OutOfBookDecision:
         context = _context_with_public_signals(context, self.modules)
+        return self._choose_call_from_context(context)
+
+    def choose_call_with_state(
+        self,
+        context: DecisionContext,
+        state_generator: AuctionStateGenerator,
+    ) -> Call | OutOfBookDecision:
+        if state_generator.modules != self.modules:
+            raise ValueError(
+                "The auction state generator must use this system's modules."
+            )
+        return self._choose_call_from_context(
+            state_generator.context_for(context)
+        )
+
+    def _choose_call_from_context(
+        self,
+        context: DecisionContext,
+    ) -> Call | OutOfBookDecision:
         for module in self.modules:
             decision = module.choose(context)
             if decision is None:
@@ -1865,54 +1884,94 @@ def _context_with_public_signals(
     context: DecisionContext,
     modules: Sequence[BiddingModule],
 ) -> DecisionContext:
-    strengths = {
-        0: AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE,
-        1: AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE,
-    }
-    current_partnership = _partnership_key(context.seat)
-    if (
-        context.auction_strength
-        is not AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE
-    ):
-        strengths[current_partnership] = context.auction_strength
-    advertised_lengths = {
-        seat: {suit: SuitLengthRange() for suit in _SUIT_ORDER}
-        for seat in Seat
-    }
-    public_fit_updates: dict[int, dict[Denomination, PublicFitState]] = {
-        0: {},
-        1: {},
-    }
-    for suit, assessment in context.fit_states.items():
-        if assessment.public is not PublicFitState.FIT_UNKNOWN:
-            public_fit_updates[current_partnership][suit] = assessment.public
-        partner = context.seat.next.next
-        if assessment.partner_length != SuitLengthRange():
-            advertised_lengths[partner][suit] = assessment.partner_length
+    return AuctionStateGenerator(modules, context).context_for(context)
 
-    fit_transfer_indices: set[int] = set()
-    invitation_signal: tuple[int, Seat] | None = None
 
-    for index, entry in enumerate(context.auction):
-        auction_prefix = context.auction[:index]
-        before_call = _context_for_auction_prefix(
+class AuctionStateGenerator:
+    """Track public auction information as calls are appended."""
+
+    def __init__(
+        self,
+        modules: Sequence[BiddingModule],
+        initial_context: DecisionContext | None = None,
+    ) -> None:
+        self.modules = tuple(modules)
+        self._strengths = {
+            0: AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE,
+            1: AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE,
+        }
+        self._advertised_lengths = {
+            seat: {suit: SuitLengthRange() for suit in _SUIT_ORDER}
+            for seat in Seat
+        }
+        self._public_fit_updates: dict[
+            int, dict[Denomination, PublicFitState]
+        ] = {0: {}, 1: {}}
+        self._game_reached = {0: False, 1: False}
+        self._invitation_signal_seat: Seat | None = None
+        self._invitation_active = False
+        self._processed_calls = 0
+
+        if initial_context is None:
+            return
+
+        current_partnership = _partnership_key(initial_context.seat)
+        if (
+            initial_context.auction_strength
+            is not AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE
+        ):
+            self._strengths[current_partnership] = (
+                initial_context.auction_strength
+            )
+        partner = initial_context.seat.next.next
+        for suit, assessment in initial_context.fit_states.items():
+            if assessment.public is not PublicFitState.FIT_UNKNOWN:
+                self._public_fit_updates[current_partnership][suit] = (
+                    assessment.public
+                )
+            if assessment.partner_length != SuitLengthRange():
+                self._advertised_lengths[partner][suit] = (
+                    assessment.partner_length
+                )
+
+        for index, entry in enumerate(initial_context.auction):
+            prefix_context = replace(
+                initial_context,
+                auction=initial_context.auction[:index],
+                seat=entry.seat,
+            )
+            self.advance(entry, prefix_context)
+
+    def advance(
+        self,
+        entry: AuctionEntry,
+        context: DecisionContext,
+    ) -> None:
+        if len(context.auction) != self._processed_calls:
+            raise ValueError(
+                "The context auction must contain exactly the calls already "
+                "processed by this state generator."
+            )
+        if context.seat is not entry.seat:
+            raise ValueError("The context seat must match the new auction entry.")
+
+        before_call = _context_from_auction_state(
             context,
-            auction_prefix,
-            entry.seat,
-            strengths,
-            advertised_lengths,
-            public_fit_updates,
-            fit_transfer_indices,
-            invitation_signal,
+            self._strengths,
+            self._advertised_lengths,
+            self._public_fit_updates,
+            self._game_reached,
+            self._invitation_signal_seat,
+            self._invitation_active,
         )
         if isinstance(entry.call, Bid):
             inferred_ranges = _infer_public_suit_lengths(
                 before_call,
-                modules,
+                self.modules,
                 entry.call,
             )
             for suit, inferred_range in inferred_ranges.items():
-                current_range = advertised_lengths[entry.seat][suit]
+                current_range = self._advertised_lengths[entry.seat][suit]
                 minimum = max(current_range.minimum, inferred_range.minimum)
                 maximum = min(current_range.maximum, inferred_range.maximum)
                 if minimum > maximum:
@@ -1920,73 +1979,90 @@ def _context_with_public_signals(
                         f"Auction call {entry.call!s} contradicts the "
                         f"advertised {suit.value} length for {entry.seat.name}."
                     )
-                advertised_lengths[entry.seat][suit] = SuitLengthRange(
+                self._advertised_lengths[entry.seat][suit] = SuitLengthRange(
                     minimum,
                     maximum,
                 )
 
-        for module in modules:
+        if self._invitation_signal_seat is not None and self._invitation_active:
+            if (
+                _same_partnership(self._invitation_signal_seat, entry.seat)
+                or entry.call is not PassCall.PASS
+            ):
+                self._invitation_active = False
+
+        partnership = _partnership_key(entry.seat)
+        fit_transfer = False
+        for module in self.modules:
             if (
                 not module.public_signals
                 or not _matches_module_opening(before_call, module)
             ):
                 continue
             for signal in module.public_signals:
-                if not _public_signal_matches(
-                    before_call,
-                    entry.call,
-                    signal,
-                ):
+                if not _public_signal_matches(before_call, entry.call, signal):
                     continue
-                partnership = _partnership_key(entry.seat)
                 if signal.establishes_fit is not None:
-                    public_fit_updates[partnership][signal.establishes_fit] = (
-                        PublicFitState.FIT_ESTABLISHED
-                    )
+                    self._public_fit_updates[partnership][
+                        signal.establishes_fit
+                    ] = PublicFitState.FIT_ESTABLISHED
                     if (
                         isinstance(entry.call, Bid)
                         and entry.call.denomination is not signal.establishes_fit
                     ):
-                        fit_transfer_indices.add(index)
+                        fit_transfer = True
                 if signal.rejects_fit is not None:
-                    public_fit_updates[partnership][signal.rejects_fit] = (
-                        PublicFitState.FIT_REJECTED
-                    )
+                    self._public_fit_updates[partnership][
+                        signal.rejects_fit
+                    ] = PublicFitState.FIT_REJECTED
                 if signal.sets_auction_strength is not None:
-                    strengths[partnership] = signal.sets_auction_strength
+                    self._strengths[partnership] = signal.sets_auction_strength
                 if signal.establishes_invitation:
-                    invitation_signal = (index, entry.seat)
+                    self._invitation_signal_seat = entry.seat
+                    self._invitation_active = True
 
-    return _context_for_auction_prefix(
-        context,
-        context.auction,
-        context.seat,
-        strengths,
-        advertised_lengths,
-        public_fit_updates,
-        fit_transfer_indices,
-        invitation_signal,
-        preserve_explicit_game_reached=True,
-    )
+        if (
+            isinstance(entry.call, Bid)
+            and _is_game_bid(entry.call)
+            and not fit_transfer
+        ):
+            self._game_reached[partnership] = True
+        self._processed_calls += 1
+
+    def context_for(self, context: DecisionContext) -> DecisionContext:
+        if len(context.auction) != self._processed_calls:
+            raise ValueError(
+                "The context auction must contain exactly the calls already "
+                "processed by this state generator."
+            )
+        return _context_from_auction_state(
+            context,
+            self._strengths,
+            self._advertised_lengths,
+            self._public_fit_updates,
+            self._game_reached,
+            self._invitation_signal_seat,
+            self._invitation_active,
+            preserve_explicit_game_reached=True,
+        )
 
 
-def _context_for_auction_prefix(
+def _context_from_auction_state(
     context: DecisionContext,
-    auction: tuple[AuctionEntry, ...],
-    seat: Seat,
     strengths: Mapping[int, AuctionStrength],
     advertised_lengths: Mapping[Seat, Mapping[Denomination, SuitLengthRange]],
     public_fit_updates: Mapping[int, Mapping[Denomination, PublicFitState]],
-    fit_transfer_indices: set[int],
-    invitation_signal: tuple[int, Seat] | None,
+    game_reached_by_partnership: Mapping[int, bool],
+    invitation_signal_seat: Seat | None,
+    invitation_active: bool,
     *,
     preserve_explicit_game_reached: bool = False,
 ) -> DecisionContext:
-    partnership = _partnership_key(seat)
-    partner = seat.next.next
+    partnership = _partnership_key(context.seat)
+    partner = context.seat.next.next
     fit_states: dict[Denomination, SuitFitAssessment] = {}
     for suit in _SUIT_ORDER:
-        own_range = advertised_lengths[seat][suit]
+        own_range = advertised_lengths[context.seat][suit]
         partner_range = advertised_lengths[partner][suit]
         public_fit = public_fit_updates[partnership].get(
             suit,
@@ -2009,33 +2085,17 @@ def _context_for_auction_prefix(
             partner_range,
         )
 
-    invitation = False
-    if invitation_signal is not None:
-        signal_index, signal_seat = invitation_signal
-        following_entries = auction[signal_index + 1 :]
-        invitation = (
-            signal_seat is not seat
-            and _same_partnership(signal_seat, seat)
-            and bool(following_entries)
-            and all(
-                entry.call is PassCall.PASS
-                and not _same_partnership(entry.seat, signal_seat)
-                for entry in following_entries
-            )
-        )
-    game_reached = any(
-        index not in fit_transfer_indices
-        and isinstance(entry.call, Bid)
-        and _is_game_bid(entry.call)
-        and _same_partnership(entry.seat, seat)
-        for index, entry in enumerate(auction)
+    invitation = (
+        invitation_active
+        and invitation_signal_seat is not None
+        and invitation_signal_seat is not context.seat
+        and _same_partnership(invitation_signal_seat, context.seat)
     )
+    game_reached = game_reached_by_partnership[partnership]
     if preserve_explicit_game_reached:
         game_reached = game_reached or context.game_reached
     return replace(
         context,
-        auction=auction,
-        seat=seat,
         auction_strength=strengths[partnership],
         fit_states=fit_states,
         game_reached=game_reached,

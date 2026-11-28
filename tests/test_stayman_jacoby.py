@@ -18,6 +18,7 @@ from bridge_sim.model import (
 from bridge_sim.auction import run_auction
 from bridge_sim.model_assistant import CallRating
 from bridge_sim.systems import (
+    AuctionStateGenerator,
     AuctionStrength,
     CompositeBiddingSystem,
     DecisionContext,
@@ -254,7 +255,11 @@ class StaymanJacobyTests(unittest.TestCase):
                 PassCall.PASS,
             ),
             Seat.NORTH,
-            simulation_evaluator=lambda candidates: Bid(5, Denomination.CLUBS),
+            simulation_evaluator=lambda candidates: (
+                Bid(5, Denomination.CLUBS)
+                if Bid(5, Denomination.CLUBS) in candidates
+                else candidates[0]
+            ),
         )
         self.assertEqual(
             system.choose_call(game_force_context),
@@ -551,8 +556,10 @@ class StaymanJacobyTests(unittest.TestCase):
 
         decision = module.choose(context)
 
-        self.assertIsNotNone(decision)
-        self.assertEqual(decision.call, Bid(4, Denomination.HEARTS))
+        self.assertEqual(
+            _selected_call(decision),
+            Bid(4, Denomination.HEARTS),
+        )
 
     def test_generic_game_force_simulates_minor_game_against_three_notrump(self) -> None:
         module = load_module(GAME_FORCE_MODULE_PATH)
@@ -586,8 +593,7 @@ class StaymanJacobyTests(unittest.TestCase):
 
                 decision = module.choose(context)
 
-                self.assertIsNotNone(decision)
-                self.assertEqual(decision.call, selected_call)
+                self.assertEqual(_selected_call(decision), selected_call)
                 self.assertEqual(tuple(seen_candidates), expected_candidates)
 
     def test_generic_game_force_requires_simulation_for_minor_fit(self) -> None:
@@ -674,6 +680,153 @@ class StaymanJacobyTests(unittest.TestCase):
             ),
             PublicFitState.FIT_REJECTED,
         )
+
+    def test_incremental_auction_state_refines_information_call_by_call(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        default_strength = AuctionStrength.GAME_MIGHT_STILL_BE_POSSIBLE
+        scenarios = (
+            (
+                "game-force",
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.CLUBS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(3, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                AuctionStrength.GAME_FORCING,
+                True,
+                False,
+                Denomination.SPADES,
+                PrivateFitState.FIT,
+                None,
+            ),
+            (
+                "transfer-fit",
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                ),
+                default_strength,
+                False,
+                False,
+                Denomination.HEARTS,
+                None,
+                PublicFitState.FIT_ESTABLISHED,
+            ),
+            (
+                "invitation",
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.CLUBS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                ),
+                default_strength,
+                False,
+                True,
+                None,
+                None,
+                None,
+            ),
+            (
+                "game-level-transfer",
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(4, Denomination.HEARTS),
+                    PassCall.PASS,
+                ),
+                AuctionStrength.GAME_FORCING,
+                False,
+                False,
+                Denomination.SPADES,
+                None,
+                PublicFitState.FIT_ESTABLISHED,
+            ),
+        )
+        hand = HandProfile(16, (4, 5, 2, 2))
+        for (
+            name,
+            calls,
+            expected_strength,
+            expected_game_reached,
+            expected_invitation,
+            expected_suit,
+            expected_private_fit,
+            expected_public_fit,
+        ) in scenarios:
+            with self.subTest(scenario=name):
+                generator = AuctionStateGenerator(system.modules)
+                history: list[Call] = []
+                seat = Seat.NORTH
+                for call in calls:
+                    before_call = _auction_context(
+                        hand,
+                        tuple(history),
+                        seat,
+                    )
+                    generator.advance(
+                        AuctionEntry(seat, call),
+                        before_call,
+                    )
+                    history.append(call)
+                    seat = seat.next
+                    current_context = _auction_context(
+                        hand,
+                        tuple(history),
+                        seat,
+                    )
+                    incremental = generator.context_for(current_context)
+                    replayed = _context_with_public_signals(
+                        current_context,
+                        system.modules,
+                    )
+                    self.assertEqual(
+                        incremental.auction_strength,
+                        replayed.auction_strength,
+                    )
+                    self.assertEqual(incremental.fit_states, replayed.fit_states)
+                    self.assertEqual(
+                        incremental.game_reached,
+                        replayed.game_reached,
+                    )
+                    self.assertEqual(
+                        incremental.invitation,
+                        replayed.invitation,
+                    )
+
+                incremental = generator.context_for(
+                    _auction_context(hand, tuple(history), seat)
+                )
+                self.assertEqual(incremental.auction_strength, expected_strength)
+                self.assertEqual(
+                    incremental.game_reached,
+                    expected_game_reached,
+                )
+                self.assertEqual(incremental.invitation, expected_invitation)
+                if expected_suit is not None:
+                    if expected_private_fit is not None:
+                        self.assertEqual(
+                            incremental.fit_states[expected_suit].private,
+                            expected_private_fit,
+                        )
+                    if expected_public_fit is not None:
+                        self.assertEqual(
+                            incremental.fit_states[expected_suit].public,
+                            expected_public_fit,
+                        )
 
     def test_auction_strength_can_be_set_to_game_no_longer_possible(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

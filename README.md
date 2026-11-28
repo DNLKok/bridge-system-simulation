@@ -99,7 +99,9 @@ in a known minor fit. Generic slam exploration is not yet implemented.
 
 Modules can also declare public auction signals with `public_signals`. These
 signals update the shared auction state, independent of either hand's private
-HCP range. Auction strength defaults to game-might-still-be-possible and can be
+HCP range. `run_auction` advances this state as each call is made; an existing
+auction is replayed once when constructing a decision context. Auction strength
+defaults to game-might-still-be-possible and can be
 marked game-forcing or game-no-longer-possible. Each suit's public fit state
 starts unknown and can become established or rejected by explicit signals or
 inferred suit-length promises. For the hand currently choosing a call, the
