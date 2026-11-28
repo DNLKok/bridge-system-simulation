@@ -125,6 +125,11 @@ class RuleCondition:
     suit_lengths: tuple[
         tuple[Denomination, int | None, int | None], ...
     ] = ()
+    suit_quality_tiebreak: tuple[
+        Denomination,
+        Denomination,
+        bool,
+    ] | None = None
     suit_opening_min_lengths: tuple[tuple[Denomination, int], ...] = ()
     stopper_suit: Denomination | None = None
     has_stopper: bool | None = None
@@ -159,6 +164,30 @@ class RuleCondition:
                 return False
             if maximum is not None and length > maximum:
                 return False
+        if self.suit_quality_tiebreak is not None:
+            preferred_suit, other_suit, strict = self.suit_quality_tiebreak
+            preferred_index = _SUIT_ORDER.index(preferred_suit)
+            other_index = _SUIT_ORDER.index(other_suit)
+            preferred_length = context.hand.shape[preferred_index]
+            other_length = context.hand.shape[other_index]
+            if preferred_length < other_length:
+                return False
+            if preferred_length == other_length:
+                suit_hcp = context.hand.suit_hcp
+                if suit_hcp is None:
+                    raise ValueError(
+                        "This bidding rule requires per-suit HCP, which is "
+                        "unavailable in this hand profile."
+                    )
+                preferred_quality = suit_hcp[preferred_index]
+                other_quality = suit_hcp[other_index]
+                quality_sufficient = (
+                    preferred_quality > other_quality
+                    if strict
+                    else preferred_quality >= other_quality
+                )
+                if not quality_sufficient:
+                    return False
         if self.stopper_suit is not None and self.has_stopper is not None:
             if context.hand.suit_honors is None:
                 raise ValueError(
@@ -303,6 +332,18 @@ class RuleCondition:
                 expressions.append(f"({suit_name}({seat_name}) >= {minimum})")
             if maximum is not None:
                 expressions.append(f"({suit_name}({seat_name}) <= {maximum})")
+        if self.suit_quality_tiebreak is not None:
+            preferred_suit, other_suit, strict = self.suit_quality_tiebreak
+            preferred_name = _SUIT_NAMES[preferred_suit]
+            other_name = _SUIT_NAMES[other_suit]
+            quality_comparison = ">" if strict else ">="
+            expressions.append(
+                f"(({preferred_name}({seat_name}) > {other_name}({seat_name}))"
+                f" || (({preferred_name}({seat_name}) >= "
+                f"{other_name}({seat_name})) && "
+                f"(hcp({seat_name}, {preferred_name}) "
+                f"{quality_comparison} hcp({seat_name}, {other_name}))))"
+            )
         if self.stopper_suit is not None and self.has_stopper is not None:
             stopper = _dealer_stopper_expression(seat_name, self.stopper_suit)
             expressions.append(
@@ -1215,6 +1256,7 @@ def _parse_condition(
         "longest_qualifying_suit_min_length",
         "suit_tie_order",
         "suit_lengths",
+        "suit_quality_tiebreak",
         "suit_opening_min_lengths",
         "stopper_suit",
         "has_stopper",
@@ -1302,6 +1344,10 @@ def _parse_condition(
                 f"Module rule {index} suit_tie_order must not repeat a suit."
             )
     suit_lengths = _parse_suit_lengths(value.get("suit_lengths"), index)
+    suit_quality_tiebreak = _parse_suit_quality_tiebreak(
+        value.get("suit_quality_tiebreak"),
+        index,
+    )
     suit_opening_min_lengths = _parse_suit_opening_min_lengths(
         value.get("suit_opening_min_lengths"),
         index,
@@ -1415,6 +1461,7 @@ def _parse_condition(
         suit=suit,
         suit_tie_order=suit_tie_order,
         suit_lengths=suit_lengths,
+        suit_quality_tiebreak=suit_quality_tiebreak,
         suit_opening_min_lengths=suit_opening_min_lengths,
         stopper_suit=stopper_suit,
         has_stopper=has_stopper,
@@ -1504,6 +1551,44 @@ def _parse_suit_lengths(
     if len({suit for suit, _, _ in lengths}) != len(lengths):
         raise ValueError(f"Module rule {index} suit_lengths repeats a suit.")
     return tuple(lengths)
+
+
+def _parse_suit_quality_tiebreak(
+    value: object,
+    index: int,
+) -> tuple[Denomination, Denomination, bool] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {
+        "suit",
+        "compared_to",
+        "strict",
+    }:
+        raise ValueError(
+            f"Module rule {index} suit_quality_tiebreak must define "
+            "suit, compared_to, and strict."
+        )
+    preferred_suit_value = value["suit"]
+    other_suit_value = value["compared_to"]
+    strict = value["strict"]
+    if not isinstance(preferred_suit_value, str) or not isinstance(
+        other_suit_value,
+        str,
+    ):
+        raise ValueError(
+            f"Module rule {index} suit_quality_tiebreak suit names must be strings."
+        )
+    if not isinstance(strict, bool):
+        raise ValueError(
+            f"Module rule {index} suit_quality_tiebreak strict must be a boolean."
+        )
+    preferred_suit = _parse_suit(preferred_suit_value, index)
+    other_suit = _parse_suit(other_suit_value, index)
+    if preferred_suit is other_suit:
+        raise ValueError(
+            f"Module rule {index} suit_quality_tiebreak must compare different suits."
+        )
+    return preferred_suit, other_suit, strict
 
 
 def _parse_suit_opening_min_lengths(
@@ -2049,6 +2134,7 @@ def _rule_suit_length_ranges(
         return None
 
     if condition.shapes is not None:
+        quality_tiebreak = condition.suit_quality_tiebreak
         possible_shapes = {
             suit_lengths
             for shape in condition.shapes
@@ -2056,6 +2142,11 @@ def _rule_suit_length_ranges(
             if all(
                 bounds[suit][0] <= length <= bounds[suit][1]
                 for suit, length in zip(_SUIT_ORDER, suit_lengths, strict=True)
+            )
+            and (
+                quality_tiebreak is None
+                or suit_lengths[_SUIT_ORDER.index(quality_tiebreak[0])]
+                >= suit_lengths[_SUIT_ORDER.index(quality_tiebreak[1])]
             )
         }
         if not possible_shapes:
@@ -2070,6 +2161,16 @@ def _rule_suit_length_ranges(
 
     while True:
         previous = tuple((minimum, maximum) for minimum, maximum in bounds.values())
+        if condition.suit_quality_tiebreak is not None:
+            preferred_suit, other_suit, _ = condition.suit_quality_tiebreak
+            bounds[preferred_suit][0] = max(
+                bounds[preferred_suit][0],
+                bounds[other_suit][0],
+            )
+            bounds[other_suit][1] = min(
+                bounds[other_suit][1],
+                bounds[preferred_suit][1],
+            )
         for suit in _SUIT_ORDER:
             other_suits = [other for other in _SUIT_ORDER if other is not suit]
             minimum = max(
@@ -2081,6 +2182,17 @@ def _rule_suit_length_ranges(
                 13 - sum(bounds[other][0] for other in other_suits),
             )
             bounds[suit] = [minimum, maximum]
+        if condition.suit_quality_tiebreak is not None:
+            preferred_suit, other_suit, _ = condition.suit_quality_tiebreak
+            outside_minimum = sum(
+                bounds[suit][0]
+                for suit in _SUIT_ORDER
+                if suit not in (preferred_suit, other_suit)
+            )
+            bounds[other_suit][1] = min(
+                bounds[other_suit][1],
+                (13 - outside_minimum) // 2,
+            )
         if (
             any(minimum > maximum for minimum, maximum in bounds.values())
             or sum(minimum for minimum, _ in bounds.values()) > 13

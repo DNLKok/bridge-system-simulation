@@ -82,8 +82,17 @@ the major with three-card support. The 2NT sequences simulate pass, 3M, 3NT, and
 Responder uses 2♣ with invitational/GF/Slam-interest hands having exactly four
 cards in one or both majors (the other major no longer), or with GF/Slam-interest
 5-4 major hands either way; the weak 5+/4+ major treatment is unchanged. Other
-five-card-major hands use the corresponding Jacoby transfer. Continuations after
-2♣ remain to be specified.
+five-card-major hands use the corresponding Jacoby transfer. Over 2♣, opener
+bids 2♦ without a four-card major, 2♥ with four or more hearts, or 2♠ with four
+or more spades and at most three hearts. Responder's continuations over 2♥, 2♠,
+and 2♦ are configured, including the weak major-quality tie-break, invitational
+signals, and GF/Slam-interest calls. For the 2♥ rebid, 2♠ is used for the
+exactly invitational 4♠ hand with at most three hearts; 3♥ is used for exactly
+invitational hands with four or more hearts, including 4-4 majors. This leaves
+no distinct hand for a separate mirrored 2NT invitation with exactly four
+spades. GF and Slam-interest continuations use the generic game-forcing module
+to reach the cheapest game in a known fit; generic slam exploration is not yet
+implemented.
 
 Modules can also declare public auction signals with `public_signals`. These
 signals update the shared auction state, independent of either hand's private

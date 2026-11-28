@@ -146,6 +146,185 @@ class StaymanJacobyTests(unittest.TestCase):
                     self.fail(f"No call selected for {hcp} HCP with shape {shape}.")
                 self.assertEqual(decision.call, expected)
 
+    def test_stayman_two_clubs_opener_rebids(self) -> None:
+        cases = (
+            (HandProfile(15, (3, 3, 4, 3)), Bid(2, Denomination.DIAMONDS)),
+            (HandProfile(15, (3, 4, 3, 3)), Bid(2, Denomination.HEARTS)),
+            (HandProfile(15, (4, 3, 3, 3)), Bid(2, Denomination.SPADES)),
+            (HandProfile(15, (4, 4, 3, 2)), Bid(2, Denomination.HEARTS)),
+        )
+        auction = (
+            Bid(1, Denomination.NOTRUMP),
+            PassCall.PASS,
+            Bid(2, Denomination.CLUBS),
+            PassCall.PASS,
+        )
+        for hand, expected in cases:
+            with self.subTest(hand=hand):
+                decision = self.module.choose(
+                    _auction_context(hand, auction, Seat.NORTH)
+                )
+                self.assertEqual(_selected_call(decision), expected)
+
+    def test_stayman_two_clubs_responder_continuations_after_major_rebids(self) -> None:
+        cases = (
+            (Bid(2, Denomination.SPADES), HandProfile(7, (4, 3, 3, 3)), PassCall.PASS),
+            (Bid(2, Denomination.SPADES), HandProfile(8, (3, 4, 3, 3)), Bid(2, Denomination.NOTRUMP)),
+            (Bid(2, Denomination.SPADES), HandProfile(9, (2, 4, 2, 5)), Bid(3, Denomination.CLUBS)),
+            (Bid(2, Denomination.SPADES), HandProfile(9, (2, 4, 5, 2)), Bid(3, Denomination.DIAMONDS)),
+            (Bid(2, Denomination.SPADES), HandProfile(15, (4, 3, 3, 3)), Bid(3, Denomination.HEARTS)),
+            (Bid(2, Denomination.SPADES), HandProfile(8, (4, 2, 4, 3)), Bid(3, Denomination.SPADES)),
+            (Bid(2, Denomination.SPADES), HandProfile(9, (3, 4, 3, 3)), Bid(3, Denomination.NOTRUMP)),
+            (Bid(2, Denomination.SPADES), HandProfile(15, (4, 4, 4, 1)), Bid(4, Denomination.CLUBS)),
+            (Bid(2, Denomination.SPADES), HandProfile(15, (4, 4, 1, 4)), Bid(4, Denomination.DIAMONDS)),
+            (Bid(2, Denomination.SPADES), HandProfile(15, (4, 1, 4, 4)), Bid(4, Denomination.HEARTS)),
+            (Bid(2, Denomination.SPADES), HandProfile(9, (4, 3, 3, 3)), Bid(4, Denomination.SPADES)),
+            (Bid(2, Denomination.HEARTS), HandProfile(7, (4, 3, 3, 3)), PassCall.PASS),
+            (Bid(2, Denomination.HEARTS), HandProfile(8, (4, 3, 3, 3)), Bid(2, Denomination.SPADES)),
+            (Bid(2, Denomination.HEARTS), HandProfile(9, (4, 2, 2, 5)), Bid(3, Denomination.CLUBS)),
+            (Bid(2, Denomination.HEARTS), HandProfile(15, (4, 2, 5, 2)), Bid(3, Denomination.DIAMONDS)),
+            (Bid(2, Denomination.HEARTS), HandProfile(15, (5, 4, 2, 2)), Bid(3, Denomination.SPADES)),
+            (Bid(2, Denomination.HEARTS), HandProfile(8, (3, 4, 3, 3)), Bid(3, Denomination.HEARTS)),
+            (Bid(2, Denomination.HEARTS), HandProfile(9, (4, 3, 3, 3)), Bid(3, Denomination.NOTRUMP)),
+            (Bid(2, Denomination.HEARTS), HandProfile(15, (4, 4, 4, 1)), Bid(4, Denomination.CLUBS)),
+            (Bid(2, Denomination.HEARTS), HandProfile(15, (4, 4, 1, 4)), Bid(4, Denomination.DIAMONDS)),
+            (Bid(2, Denomination.HEARTS), HandProfile(9, (3, 4, 3, 3)), Bid(4, Denomination.HEARTS)),
+        )
+        for opener_call, hand, expected in cases:
+            with self.subTest(opener_call=opener_call, hand=hand):
+                calls = (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.CLUBS),
+                    PassCall.PASS,
+                    opener_call,
+                    PassCall.PASS,
+                )
+                decision = self.module.choose(
+                    _auction_context(hand, calls, Seat.SOUTH)
+                )
+                self.assertEqual(_selected_call(decision), expected)
+
+    def test_stayman_two_clubs_responder_continuations_after_two_diamonds(self) -> None:
+        weak_cases = (
+            (HandProfile(7, (5, 5, 2, 1), (3, 3, 1, 0)), Bid(2, Denomination.HEARTS)),
+            (HandProfile(7, (5, 5, 2, 1), (4, 3, 0, 0)), Bid(2, Denomination.SPADES)),
+            (HandProfile(7, (5, 6, 1, 1), (0, 7, 0, 0)), Bid(2, Denomination.HEARTS)),
+            (HandProfile(7, (6, 5, 1, 1), (0, 7, 0, 0)), Bid(2, Denomination.SPADES)),
+        )
+        continuation_cases = (
+            (HandProfile(8, (4, 4, 3, 2)), Bid(2, Denomination.NOTRUMP)),
+            (HandProfile(9, (3, 4, 1, 5)), Bid(3, Denomination.CLUBS)),
+            (HandProfile(9, (4, 2, 2, 5)), Bid(3, Denomination.CLUBS)),
+            (HandProfile(9, (3, 4, 5, 1)), Bid(3, Denomination.DIAMONDS)),
+            (HandProfile(9, (4, 2, 5, 2)), Bid(3, Denomination.DIAMONDS)),
+            (HandProfile(9, (5, 4, 2, 2)), Bid(3, Denomination.HEARTS)),
+            (HandProfile(15, (4, 5, 2, 2)), Bid(3, Denomination.SPADES)),
+            (HandProfile(9, (3, 4, 3, 3)), Bid(3, Denomination.NOTRUMP)),
+        )
+        auction = (
+            Bid(1, Denomination.NOTRUMP),
+            PassCall.PASS,
+            Bid(2, Denomination.CLUBS),
+            PassCall.PASS,
+            Bid(2, Denomination.DIAMONDS),
+            PassCall.PASS,
+        )
+        for hand, expected in (*weak_cases, *continuation_cases):
+            with self.subTest(hand=hand):
+                decision = self.module.choose(
+                    _auction_context(hand, auction, Seat.SOUTH)
+                )
+                self.assertEqual(_selected_call(decision), expected)
+
+    def test_stayman_two_clubs_generic_modules_resolve_gf_and_invitation(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        game_force_context = _auction_context(
+            HandProfile(15, (4, 3, 3, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.CLUBS),
+                PassCall.PASS,
+                Bid(2, Denomination.SPADES),
+                PassCall.PASS,
+                Bid(3, Denomination.CLUBS),
+                PassCall.PASS,
+            ),
+            Seat.NORTH,
+        )
+        self.assertEqual(
+            system.choose_call(game_force_context),
+            Bid(5, Denomination.CLUBS),
+        )
+
+        slam_interest_context = _auction_context(
+            HandProfile(15, (4, 3, 3, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.CLUBS),
+                PassCall.PASS,
+                Bid(2, Denomination.SPADES),
+                PassCall.PASS,
+                Bid(3, Denomination.HEARTS),
+                PassCall.PASS,
+            ),
+            Seat.NORTH,
+        )
+        self.assertEqual(
+            system.choose_call(slam_interest_context),
+            Bid(4, Denomination.SPADES),
+        )
+
+        invitation_context = _auction_context(
+            HandProfile(15, (4, 3, 3, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.CLUBS),
+                PassCall.PASS,
+                Bid(2, Denomination.SPADES),
+                PassCall.PASS,
+                Bid(3, Denomination.SPADES),
+                PassCall.PASS,
+            ),
+            Seat.NORTH,
+            simulation_evaluator=lambda candidates: (
+                Bid(4, Denomination.SPADES)
+                if Bid(4, Denomination.SPADES) in candidates
+                else candidates[0]
+            ),
+        )
+        self.assertEqual(
+            system.choose_call(invitation_context),
+            Bid(4, Denomination.SPADES),
+        )
+
+        no_major_fit_invitation = _auction_context(
+            HandProfile(15, (3, 3, 4, 3)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.CLUBS),
+                PassCall.PASS,
+                Bid(2, Denomination.DIAMONDS),
+                PassCall.PASS,
+                Bid(2, Denomination.NOTRUMP),
+                PassCall.PASS,
+            ),
+            Seat.NORTH,
+            simulation_evaluator=lambda candidates: (
+                Bid(3, Denomination.NOTRUMP)
+                if Bid(3, Denomination.NOTRUMP) in candidates
+                else candidates[0]
+            ),
+        )
+        self.assertEqual(
+            system.choose_call(no_major_fit_invitation),
+            Bid(3, Denomination.NOTRUMP),
+        )
+
     def test_strength_tier_boundaries(self) -> None:
         for hcp in (0, 7, 9, 14, 15, 37):
             with self.subTest(hcp=hcp):
@@ -768,7 +947,10 @@ passout_seat = true
             ),
             seat=Seat.NORTH,
         )
-        self.assertEqual(system.choose_call(no_public_force), PassCall.PASS)
+        self.assertEqual(
+            system.choose_call(no_public_force),
+            Bid(2, Denomination.SPADES),
+        )
 
         slam_interest = DecisionContext(
             hand=HandProfile(16, (4, 3, 3, 3)),
