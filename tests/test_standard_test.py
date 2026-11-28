@@ -15,6 +15,8 @@ from bridge_sim.model import (
 )
 from bridge_sim.standard_test import (
     BoardAuction,
+    _auction_headers,
+    _auction_rows,
     _report_html,
     _output_filename,
     _standard_rotation,
@@ -81,6 +83,57 @@ class StandardTestReportTests(unittest.TestCase):
         )
         self.assertEqual(_standard_rotation(17), rotations[0])
         self.assertEqual(_standard_rotation(32), rotations[15])
+
+    def test_auction_seat_headers_are_red_only_for_vulnerable_sides(self) -> None:
+        north_south = _auction_headers(Vulnerability.NORTH_SOUTH)
+        self.assertIn('<th class="vulnerable">North</th>', north_south)
+        self.assertIn('<th class="vulnerable">South</th>', north_south)
+        self.assertIn("<th>East</th>", north_south)
+        self.assertIn("<th>West</th>", north_south)
+
+        east_west = _auction_headers(Vulnerability.EAST_WEST)
+        self.assertIn('<th class="vulnerable">East</th>', east_west)
+        self.assertIn('<th class="vulnerable">West</th>', east_west)
+        self.assertIn("<th>North</th>", east_west)
+        self.assertIn("<th>South</th>", east_west)
+
+        all_vulnerable = _auction_headers(Vulnerability.ALL)
+        self.assertEqual(all_vulnerable.count('class="vulnerable"'), 4)
+        none_vulnerable = _auction_headers(Vulnerability.NONE)
+        self.assertNotIn('class="vulnerable"', none_vulnerable)
+
+    def test_auction_rows_start_at_the_dealer_and_wrap_after_west(self) -> None:
+        expected_rows = {
+            Seat.NORTH: (
+                ("PASS", "PASS", "PASS", "PASS"),
+                ("PASS", "", "", ""),
+            ),
+            Seat.EAST: (
+                ("", "PASS", "PASS", "PASS"),
+                ("PASS", "PASS", "", ""),
+            ),
+            Seat.SOUTH: (
+                ("", "", "PASS", "PASS"),
+                ("PASS", "PASS", "PASS", ""),
+            ),
+            Seat.WEST: (
+                ("", "", "", "PASS"),
+                ("PASS", "PASS", "PASS", "PASS"),
+            ),
+        }
+        for dealer, expected in expected_rows.items():
+            entries = []
+            seat = dealer
+            for _ in range(5):
+                entries.append(AuctionEntry(seat, PassCall.PASS))
+                seat = seat.next
+            auction = AuctionResult(tuple(entries), None)
+            expected_html = "".join(
+                "<tr>" + "".join(f"<td>{call}</td>" for call in row) + "</tr>"
+                for row in expected
+            )
+            with self.subTest(dealer=dealer):
+                self.assertEqual(_auction_rows(auction), expected_html)
 
     def test_filename_uses_timestamp_and_both_system_abbreviations(self) -> None:
         settings = load_settings(CONFIG)

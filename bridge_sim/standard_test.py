@@ -333,6 +333,7 @@ h3 {{ font-size: 10pt; margin: 0 0 1mm; text-align: center; }}
 .auction table {{ border-collapse: collapse; width: 100%; }}
 .auction th, .auction td {{ border: 1px solid #aebdc7; padding: 1.2mm 3mm; text-align: center; }}
 .auction th {{ background: #edf3f6; }}
+.auction th.vulnerable {{ background: #b00020; color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 .contract {{ font-weight: bold; margin-top: 2mm; }}
 .small {{ color: #536978; font-size: 8.5pt; }}
 </style>
@@ -391,6 +392,7 @@ def _board_html(result: BoardAuction, *, first: bool) -> str:
         for seat in (Seat.NORTH, Seat.WEST, Seat.EAST, Seat.SOUTH)
     )
     rows = _auction_rows(result.auction)
+    headers = _auction_headers(board.vulnerability)
     return f"""\
 <article class="board{first_class}">
   <h2>Board {board.board_number}</h2>
@@ -402,7 +404,7 @@ def _board_html(result: BoardAuction, *, first: bool) -> str:
   <section class="auction">
     <h3>Auction</h3>
     <table>
-      <thead><tr><th>North</th><th>East</th><th>South</th><th>West</th></tr></thead>
+      <thead>{headers}</thead>
       <tbody>{rows}</tbody>
     </table>
     <p class="contract">Result: {contract}</p>
@@ -431,15 +433,38 @@ def _hand_html(board: PBNBoard, seat: Seat, position: str) -> str:
 
 
 def _auction_rows(auction: AuctionResult) -> str:
-    rows: list[str] = []
-    for start in range(0, len(auction.entries), 4):
-        calls = [""] * 4
-        for entry in auction.entries[start : start + 4]:
-            calls[_SEAT_COLUMNS[entry.seat]] = html.escape(str(entry.call))
-        rows.append(
-            "<tr>" + "".join(f"<td>{call}</td>" for call in calls) + "</tr>"
+    if not auction.entries:
+        return ""
+    first_column = _SEAT_COLUMNS[auction.entries[0].seat]
+    rows: list[list[str]] = []
+    for call_index, entry in enumerate(auction.entries):
+        row_index = (first_column + call_index) // 4
+        while len(rows) <= row_index:
+            rows.append([""] * 4)
+        rows[row_index][_SEAT_COLUMNS[entry.seat]] = html.escape(str(entry.call))
+    return "".join(
+        "<tr>" + "".join(f"<td>{call}</td>" for call in calls) + "</tr>"
+        for calls in rows
+    )
+
+
+def _auction_headers(vulnerability: Vulnerability) -> str:
+    headers: list[str] = []
+    for seat in (Seat.NORTH, Seat.EAST, Seat.SOUTH, Seat.WEST):
+        vulnerable = (
+            vulnerability is Vulnerability.ALL
+            or (
+                vulnerability is Vulnerability.NORTH_SOUTH
+                and seat in (Seat.NORTH, Seat.SOUTH)
+            )
+            or (
+                vulnerability is Vulnerability.EAST_WEST
+                and seat in (Seat.EAST, Seat.WEST)
+            )
         )
-    return "".join(rows)
+        class_name = ' class="vulnerable"' if vulnerable else ""
+        headers.append(f"<th{class_name}>{seat.name.title()}</th>")
+    return "<tr>" + "".join(headers) + "</tr>"
 
 
 def _render_pdf(document: str, output: Path) -> None:
