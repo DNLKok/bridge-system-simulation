@@ -2,7 +2,7 @@ schema_version = 1
 kind = "module"
 id = "simple-overcalls"
 version = "1.0.0"
-name = "Simple natural overcalls"
+name = "Simple overcalls and takeout doubles"
 opponent_opening_calls = ["1C", "1D", "1H", "1S", "2C", "2D", "2H", "2S"]
 
 [[rules]]

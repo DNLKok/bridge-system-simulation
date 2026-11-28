@@ -65,6 +65,26 @@ when HCP plus the lengths of the two longest suits total at least 20, then
 handles balanced notrump and strong openings before choosing a longest-suit
 1-level opening. Its standalone system is
 [systems/standard-openings.toml](systems/standard-openings.toml).
+
+## Standard bidding-system test
+
+[systems/standard-test.toml](systems/standard-test.toml) composes standard
+openings, traditional preempts, and simple overcalls (including its takeout
+doubles), in that priority order. The same composite system is assigned to
+North-South and East-West in [simulation/standard-test.toml](simulation/standard-test.toml).
+Edit that settings file to change the deal count, seed, dealer, vulnerability,
+systems, or PDF output. Advanced out-of-book logic is disabled and the runner
+rejects settings that enable it. Run the test with:
+
+```sh
+python -m bridge_sim.standard_test
+```
+
+The default run generates 16 deals with seed `20261128` and writes
+[reports/standard-test.pdf](reports/standard-test.pdf). The PDF starts with
+the systems and settings, then shows each complete deal as a compass hand
+diagram beside its complete auction. PDF rendering requires Chromium on `PATH`.
+
 If `run_auction` encounters an out-of-book decision, it raises a clear error
 instead of silently inventing a call; provide that auction context to the
 model-assistant command to get a rated recommendation.

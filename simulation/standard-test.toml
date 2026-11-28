@@ -1,0 +1,13 @@
+schema_version = 1
+
+[simulation]
+deal_count = 16
+seed = 20261128
+advanced_out_of_book = false
+dealer = "north"
+vulnerability = "none"
+output = "../reports/standard-test.pdf"
+
+[systems]
+north_south = "../systems/standard-test.toml"
+east_west = "../systems/standard-test.toml"
