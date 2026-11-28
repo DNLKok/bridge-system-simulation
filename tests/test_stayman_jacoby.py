@@ -507,6 +507,28 @@ class StaymanJacobyTests(unittest.TestCase):
                     self.assertIn(Bid(3, Denomination.NOTRUMP), seen_candidates)
                     self.assertIn(expected, seen_candidates)
 
+    def test_game_force_corrects_three_notrump_to_a_known_major_fit(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        context = _auction_context(
+            HandProfile(16, (4, 5, 2, 2)),
+            (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.CLUBS),
+                PassCall.PASS,
+                Bid(2, Denomination.HEARTS),
+                PassCall.PASS,
+                Bid(3, Denomination.NOTRUMP),
+                PassCall.PASS,
+            ),
+            Seat.NORTH,
+        )
+
+        self.assertEqual(
+            system.choose_call(context),
+            Bid(4, Denomination.SPADES),
+        )
+
     def test_generic_game_force_prefers_major_fit_without_simulation(self) -> None:
         module = load_module(GAME_FORCE_MODULE_PATH)
         context = DecisionContext(

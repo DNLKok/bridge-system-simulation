@@ -2300,9 +2300,6 @@ def _jump_to_game_in_gf(
     context: DecisionContext,
     rule_id: str,
 ) -> Call | None:
-    if context.game_reached:
-        return PassCall.PASS if PassCall.PASS in context.legal_calls else None
-
     game_calls = [
         Bid(3, Denomination.NOTRUMP),
         Bid(4, Denomination.HEARTS),
@@ -2327,11 +2324,19 @@ def _jump_to_game_in_gf(
     minor_fits = private_fits.intersection(
         {Denomination.CLUBS, Denomination.DIAMONDS}
     )
-    if major_fits:
-        candidates = sorted(
-            (game_calls_by_suit[suit] for suit in major_fits),
-            key=lambda call: call.order,
-        )
+    major_game_candidates = sorted(
+        (game_calls_by_suit[suit] for suit in major_fits),
+        key=lambda call: call.order,
+    )
+    if context.game_reached:
+        legal_major_games = [
+            call for call in major_game_candidates if call in context.legal_calls
+        ]
+        if legal_major_games:
+            return legal_major_games[0]
+        return PassCall.PASS if PassCall.PASS in context.legal_calls else None
+    if major_game_candidates:
+        candidates = major_game_candidates
     elif minor_fits:
         candidates = [
             Bid(3, Denomination.NOTRUMP),

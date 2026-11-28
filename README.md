@@ -113,7 +113,8 @@ in the [Stayman-Jacoby system](systems/standard-stayman-jacoby.toml), responds
 to a public game force by bidding the game in a confirmed major fit. For a
 confirmed minor fit, it simulates 3NT against the minor-suit game and chooses
 the better-scoring option. Without a confirmed suit fit it bids 3NT. If the
-partnership has already reached game, it passes.
+partnership has already reached game, it still corrects to a legal major-suit
+game when a major fit is known; otherwise it passes.
 
 The reusable
 [respond-to-invitational-only module](systems/modules/respond-to-invitational-only.toml)
