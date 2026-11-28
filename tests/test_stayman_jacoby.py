@@ -1195,6 +1195,76 @@ passout_seat = true
         )
         self.assertEqual(system.choose_call(gf_context), Bid(4, Denomination.HEARTS))
 
+    def test_three_notrump_over_major_transfers_allows_game_force_and_slam_interest(
+        self,
+    ) -> None:
+        system = load_system(SYSTEM_PATH)
+        cases = (
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.SPADES),
+                    PassCall.PASS,
+                ),
+                (5, 3, 2, 3),
+            ),
+            (
+                (
+                    Bid(1, Denomination.NOTRUMP),
+                    PassCall.PASS,
+                    Bid(2, Denomination.DIAMONDS),
+                    PassCall.PASS,
+                    Bid(2, Denomination.HEARTS),
+                    PassCall.PASS,
+                ),
+                (3, 5, 2, 3),
+            ),
+        )
+        for auction, shape in cases:
+            for hcp in (14, 15):
+                with self.subTest(auction=auction, hcp=hcp):
+                    decision = system.choose_call(
+                        _auction_context(
+                            HandProfile(hcp, shape),
+                            auction,
+                            Seat.SOUTH,
+                        )
+                    )
+                    self.assertEqual(
+                        decision,
+                        Bid(3, Denomination.NOTRUMP),
+                    )
+
+    def test_stayman_three_notrump_after_any_reply_accepts_slam_interest(self) -> None:
+        system = load_system(SYSTEM_PATH)
+        cases = (
+            (Bid(2, Denomination.SPADES), (3, 4, 3, 3)),
+            (Bid(2, Denomination.HEARTS), (4, 3, 3, 3)),
+            (Bid(2, Denomination.DIAMONDS), (3, 4, 3, 3)),
+            (Bid(2, Denomination.DIAMONDS), (4, 3, 3, 3)),
+        )
+        for opener_reply, shape in cases:
+            auction = (
+                Bid(1, Denomination.NOTRUMP),
+                PassCall.PASS,
+                Bid(2, Denomination.CLUBS),
+                PassCall.PASS,
+                opener_reply,
+                PassCall.PASS,
+            )
+            with self.subTest(opener_reply=opener_reply, shape=shape):
+                decision = system.choose_call(
+                    _auction_context(
+                        HandProfile(15, shape),
+                        auction,
+                        Seat.SOUTH,
+                    )
+                )
+                self.assertEqual(decision, Bid(3, Denomination.NOTRUMP))
+
     def test_game_force_persists_and_private_strength_is_not_a_signal(self) -> None:
         system = load_system(SYSTEM_PATH)
         already_at_game = _context(

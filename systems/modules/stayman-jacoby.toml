@@ -658,12 +658,12 @@ suit = "spades"
 min_suit_length = 6
 
 [[rules]]
-id = "gf-responder-bids-three-notrump-with-five-spades-and-no-four-card-side-suit"
+id = "responder-bids-three-notrump-with-five-spades-and-no-four-card-side-suit"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2H", "PASS", "2S", "PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 suit_lengths = { spades = { min = 5, max = 5 }, hearts = { max = 3 }, diamonds = { max = 3 }, clubs = { max = 3 } }
 
 [[rules]]
@@ -838,12 +838,12 @@ suit = "hearts"
 min_suit_length = 6
 
 [[rules]]
-id = "gf-responder-bids-three-notrump-with-five-hearts-and-no-four-card-side-suit"
+id = "responder-bids-three-notrump-with-five-hearts-and-no-four-card-side-suit"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2D", "PASS", "2H", "PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 suit_lengths = { hearts = { min = 5, max = 5 }, spades = { max = 3 }, diamonds = { max = 3 }, clubs = { max = 3 } }
 
 [[rules]]
@@ -1123,12 +1123,12 @@ strengths = ["Invitational"]
 suit_lengths = { spades = { min = 4 } }
 
 [[rules]]
-id = "gf-responder-bids-three-notrump-over-stayman-two-spades"
+id = "gf-or-slam-responder-bids-three-notrump-over-stayman-two-spades"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2C", "PASS", "2S", "PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 suit_lengths = { hearts = { min = 4, max = 4 }, spades = { max = 3 }, diamonds = { max = 4 }, clubs = { max = 4 } }
 
 [[rules]]
@@ -1221,12 +1221,12 @@ strengths = ["Invitational"]
 suit_lengths = { hearts = { min = 4 } }
 
 [[rules]]
-id = "gf-responder-bids-three-notrump-over-stayman-two-hearts"
+id = "gf-or-slam-responder-bids-three-notrump-over-stayman-two-hearts"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2C", "PASS", "2H", "PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 suit_lengths = { spades = { min = 4, max = 4 }, hearts = { max = 3 }, diamonds = { max = 4 }, clubs = { max = 4 } }
 
 [[rules]]
@@ -1349,21 +1349,21 @@ strengths = ["GF", "Slam interest"]
 suit_lengths = { spades = { min = 4, max = 4 }, hearts = { min = 5 } }
 
 [[rules]]
-id = "gf-responder-bids-three-notrump-with-four-hearts-over-stayman-two-diamonds"
+id = "gf-or-slam-responder-bids-three-notrump-with-four-hearts-over-stayman-two-diamonds"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2C", "PASS", "2D", "PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 suit_lengths = { hearts = { min = 4, max = 4 }, spades = { max = 4 }, clubs = { max = 4 }, diamonds = { max = 4 } }
 
 [[rules]]
-id = "gf-responder-bids-three-notrump-with-four-spades-over-stayman-two-diamonds"
+id = "gf-or-slam-responder-bids-three-notrump-with-four-spades-over-stayman-two-diamonds"
 call = "3NT"
 
 [rules.when]
 after_opening_calls = ["PASS", "2C", "PASS", "2D", "PASS"]
-strengths = ["GF"]
+strengths = ["GF", "Slam interest"]
 suit_lengths = { spades = { min = 4, max = 4 }, hearts = { max = 4 }, clubs = { max = 4 }, diamonds = { max = 4 } }
 
 [[rules]]
