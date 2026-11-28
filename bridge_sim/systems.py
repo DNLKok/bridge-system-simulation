@@ -440,7 +440,9 @@ class BiddingRule:
     def decide(self, context: DecisionContext, module_id: str) -> ModuleDecision | None:
         if not self.condition.matches(context):
             return None
-        if self.evaluate_calls or self.respond_to_invitation:
+        if self.jump_to_game_in_gf:
+            call = _jump_to_game_in_gf(context, self.rule_id)
+        elif self.evaluate_calls or self.respond_to_invitation:
             if context.simulation_evaluator is None:
                 raise RuntimeError(
                     f"Rule {self.rule_id!r} requires a simulation evaluator."
@@ -477,6 +479,20 @@ class BiddingRule:
             return DealerCallCondition()
         if self.evaluate_calls or self.respond_to_invitation:
             return DealerCallCondition()
+        if self.jump_to_game_in_gf:
+            private_fits = {
+                suit
+                for suit, assessment in context.fit_states.items()
+                if assessment.private is PrivateFitState.FIT
+            }
+            has_major_fit = private_fits.intersection(
+                {Denomination.HEARTS, Denomination.SPADES}
+            )
+            has_minor_fit = private_fits.intersection(
+                {Denomination.CLUBS, Denomination.DIAMONDS}
+            )
+            if has_minor_fit and not has_major_fit:
+                return DealerCallCondition()
         if self.condition.suit_overcall_tiers:
             return self._dealer_suit_overcall_condition(context, observed_call)
         if self.condition.suit_opening_min_lengths:
@@ -495,7 +511,7 @@ class BiddingRule:
 
     def _selected_call(self, context: DecisionContext) -> Call | None:
         if self.jump_to_game_in_gf:
-            return _jump_to_game_in_gf(context)
+            return _jump_to_game_in_gf(context, self.rule_id)
         if self.condition.suit_opening_min_lengths:
             tie_order = self.condition.suit_tie_order
             if tie_order is None:
@@ -2280,7 +2296,10 @@ def _invitation_response_calls(context: DecisionContext) -> tuple[Call, ...]:
     return tuple(call for call in candidates if call in context.legal_calls)
 
 
-def _jump_to_game_in_gf(context: DecisionContext) -> Call | None:
+def _jump_to_game_in_gf(
+    context: DecisionContext,
+    rule_id: str,
+) -> Call | None:
     if context.game_reached:
         return PassCall.PASS if PassCall.PASS in context.legal_calls else None
 
@@ -2302,20 +2321,45 @@ def _jump_to_game_in_gf(context: DecisionContext) -> Call | None:
         for suit, assessment in context.fit_states.items()
         if assessment.private is PrivateFitState.FIT
     }
-    if private_fits:
+    major_fits = private_fits.intersection(
+        {Denomination.HEARTS, Denomination.SPADES}
+    )
+    minor_fits = private_fits.intersection(
+        {Denomination.CLUBS, Denomination.DIAMONDS}
+    )
+    if major_fits:
         candidates = sorted(
-            (
-                game_calls_by_suit[suit]
-                for suit in private_fits
-                if suit in game_calls_by_suit
-            ),
+            (game_calls_by_suit[suit] for suit in major_fits),
             key=lambda call: call.order,
         )
+    elif minor_fits:
+        candidates = [
+            Bid(3, Denomination.NOTRUMP),
+            *(
+                game_calls_by_suit[suit]
+                for suit in (Denomination.CLUBS, Denomination.DIAMONDS)
+                if suit in minor_fits
+            ),
+        ]
     else:
         candidates = [Bid(3, Denomination.NOTRUMP)]
     legal_candidates = [
         call for call in candidates if call in context.legal_calls
     ]
+    if minor_fits and not major_fits and legal_candidates:
+        if len(legal_candidates) == 1:
+            return legal_candidates[0]
+        if context.simulation_evaluator is None:
+            raise RuntimeError(
+                f"Rule {rule_id!r} requires a simulation evaluator."
+            )
+        call = context.simulation_evaluator(legal_candidates)
+        if call not in legal_candidates:
+            raise RuntimeError(
+                f"Simulation for rule {rule_id!r} returned "
+                f"unconfigured call {call!s}."
+            )
+        return call
     if not legal_candidates:
         legal_candidates = [
             call for call in game_calls if call in context.legal_calls

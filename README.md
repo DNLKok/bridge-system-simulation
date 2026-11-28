@@ -93,9 +93,9 @@ signals, and GF/Slam-interest calls. For the 2♥ rebid, 2♠ is used for the
 exactly invitational 4♠ hand with at most three hearts; 3♥ is used for exactly
 invitational hands with four or more hearts, including 4-4 majors. This leaves
 no distinct hand for a separate mirrored 2NT invitation with exactly four
-spades. GF and Slam-interest continuations use the generic game-forcing module
-to reach the cheapest game in a known fit; generic slam exploration is not yet
-implemented.
+spades. GF and Slam-interest continuations use the generic game-forcing module:
+it bids game in a known major fit, and simulates 3NT against the minor-suit game
+in a known minor fit. Generic slam exploration is not yet implemented.
 
 Modules can also declare public auction signals with `public_signals`. These
 signals update the shared auction state, independent of either hand's private
@@ -110,9 +110,10 @@ game-no-longer-possible state. The Stayman-Jacoby module marks its specified
 responder bids and continuations this way. The reusable
 [jump-to-game-in-GF module](systems/modules/jump-to-game-in-GF.toml), included
 in the [Stayman-Jacoby system](systems/standard-stayman-jacoby.toml), responds
-to a public game force by bidding the cheapest game in a confirmed suit fit;
-without a confirmed suit fit it bids 3NT. If that game has already been bid by
-the partnership, it passes.
+to a public game force by bidding the game in a confirmed major fit. For a
+confirmed minor fit, it simulates 3NT against the minor-suit game and chooses
+the better-scoring option. Without a confirmed suit fit it bids 3NT. If the
+partnership has already reached game, it passes.
 
 The reusable
 [respond-to-invitational-only module](systems/modules/respond-to-invitational-only.toml)

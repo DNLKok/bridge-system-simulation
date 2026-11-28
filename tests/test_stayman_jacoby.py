@@ -24,6 +24,7 @@ from bridge_sim.systems import (
     ModuleDecision,
     PrivateFitState,
     PublicFitState,
+    SuitFitAssessment,
     SuitLengthRange,
     _context_with_public_signals,
     _derive_public_fit,
@@ -35,6 +36,7 @@ from bridge_sim.systems import (
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "systems" / "modules" / "stayman-jacoby.toml"
 SYSTEM_PATH = ROOT / "systems" / "standard-stayman-jacoby.toml"
+GAME_FORCE_MODULE_PATH = ROOT / "systems" / "modules" / "jump-to-game-in-GF.toml"
 LEGAL_CALLS = frozenset(
     {
         PassCall.PASS,
@@ -252,6 +254,7 @@ class StaymanJacobyTests(unittest.TestCase):
                 PassCall.PASS,
             ),
             Seat.NORTH,
+            simulation_evaluator=lambda candidates: Bid(5, Denomination.CLUBS),
         )
         self.assertEqual(
             system.choose_call(game_force_context),
@@ -479,20 +482,111 @@ class StaymanJacobyTests(unittest.TestCase):
         )
         for calls, seat, expected in cases:
             with self.subTest(calls=calls):
-                auction = tuple(
-                    AuctionEntry(Seat.NORTH, call)
-                    if index % 4 == 0
-                    else AuctionEntry(Seat.EAST, call)
-                    if index % 4 == 1
-                    else AuctionEntry(Seat.SOUTH, call)
-                    if index % 4 == 2
-                    else AuctionEntry(Seat.WEST, call)
-                    for index, call in enumerate(calls)
-                )
+                seen_candidates: list[Call] = []
+
+                def evaluate(
+                    candidates: Sequence[Call],
+                    selected: Call = expected,
+                ) -> Call:
+                    seen_candidates.extend(candidates)
+                    return selected
+
                 decision = system.choose_call(
-                    _context(HandProfile(9, (4, 3, 3, 3)), auction, seat=seat)
+                    _auction_context(
+                        HandProfile(9, (4, 3, 3, 3)),
+                        calls,
+                        seat,
+                        simulation_evaluator=evaluate,
+                    )
                 )
                 self.assertEqual(decision, expected)
+                if expected in (
+                    Bid(5, Denomination.CLUBS),
+                    Bid(5, Denomination.DIAMONDS),
+                ):
+                    self.assertIn(Bid(3, Denomination.NOTRUMP), seen_candidates)
+                    self.assertIn(expected, seen_candidates)
+
+    def test_generic_game_force_prefers_major_fit_without_simulation(self) -> None:
+        module = load_module(GAME_FORCE_MODULE_PATH)
+        context = DecisionContext(
+            hand=HandProfile(16, (4, 3, 3, 3)),
+            auction=(),
+            legal_calls=LEGAL_CALLS,
+            seat=Seat.NORTH,
+            dealer=Seat.NORTH,
+            vulnerability=Vulnerability.NONE,
+            auction_strength=AuctionStrength.GAME_FORCING,
+            fit_states={
+                Denomination.HEARTS: SuitFitAssessment(
+                    private=PrivateFitState.FIT
+                ),
+                Denomination.CLUBS: SuitFitAssessment(
+                    private=PrivateFitState.FIT
+                ),
+            },
+        )
+
+        decision = module.choose(context)
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.call, Bid(4, Denomination.HEARTS))
+
+    def test_generic_game_force_simulates_minor_game_against_three_notrump(self) -> None:
+        module = load_module(GAME_FORCE_MODULE_PATH)
+        expected_candidates = (
+            Bid(3, Denomination.NOTRUMP),
+            Bid(5, Denomination.CLUBS),
+        )
+        for selected_call in expected_candidates:
+            with self.subTest(selected_call=selected_call):
+                seen_candidates: list[Call] = []
+
+                def evaluate(candidates: Sequence[Call]) -> Call:
+                    seen_candidates.extend(candidates)
+                    return selected_call
+
+                context = DecisionContext(
+                    hand=HandProfile(16, (4, 3, 3, 3)),
+                    auction=(),
+                    legal_calls=LEGAL_CALLS,
+                    seat=Seat.NORTH,
+                    dealer=Seat.NORTH,
+                    vulnerability=Vulnerability.NONE,
+                    simulation_evaluator=evaluate,
+                    auction_strength=AuctionStrength.GAME_FORCING,
+                    fit_states={
+                        Denomination.CLUBS: SuitFitAssessment(
+                            private=PrivateFitState.FIT
+                        ),
+                    },
+                )
+
+                decision = module.choose(context)
+
+                self.assertIsNotNone(decision)
+                self.assertEqual(decision.call, selected_call)
+                self.assertEqual(tuple(seen_candidates), expected_candidates)
+
+    def test_generic_game_force_requires_simulation_for_minor_fit(self) -> None:
+        module = load_module(GAME_FORCE_MODULE_PATH)
+        context = DecisionContext(
+            hand=HandProfile(16, (4, 3, 3, 3)),
+            auction=(),
+            legal_calls=LEGAL_CALLS,
+            seat=Seat.NORTH,
+            dealer=Seat.NORTH,
+            vulnerability=Vulnerability.NONE,
+            auction_strength=AuctionStrength.GAME_FORCING,
+            fit_states={
+                Denomination.DIAMONDS: SuitFitAssessment(
+                    private=PrivateFitState.FIT
+                ),
+            },
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "requires a simulation evaluator"):
+            module.choose(context)
 
     def test_auction_state_tracks_strength_and_public_private_fits(self) -> None:
         system = load_system(SYSTEM_PATH)
@@ -780,7 +874,12 @@ passout_seat = true
         for auction, hand, expected in cases:
             with self.subTest(auction=auction, hand=hand):
                 decision = system.choose_call(
-                    _auction_context(hand, auction, Seat.NORTH)
+                    _auction_context(
+                        hand,
+                        auction,
+                        Seat.NORTH,
+                        simulation_evaluator=lambda candidates: expected,
+                    )
                 )
                 self.assertEqual(decision, expected)
 
